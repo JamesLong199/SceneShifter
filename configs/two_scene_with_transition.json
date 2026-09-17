@@ -1,0 +1,28 @@
+{
+  "frame_prompt_routing": {
+    "enabled": true,
+    "num_frames": 8,
+    "frame_splits": [3],
+    "segment_prompts": ["scene 0", "scene 1"],
+    "segment_prompt_start_timestep": 0,
+    "len_trans": 2,
+    "len_trans_context": 1,
+    "trans_timestep_range": [2, 5],
+    "attention_control_schedule": [
+      {
+        "timestep_range": [0, 39],
+        "self_attention_mask": [
+          [[1, "full"], [0, "full"]],
+          [[1, "fg"], [1, "full"]]
+        ],
+        "params": {
+          "mask_type": "scene0",
+          "auto_q_scale": true,
+          "q_scale_bg_only": false,
+          "apply_on_uncond_passes": false,
+          "q_scale": 0.5
+        }
+      }
+    ]
+  }
+}

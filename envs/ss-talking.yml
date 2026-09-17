@@ -1,0 +1,13 @@
+name: ss-talking
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - torch==2.4.1
+      - numpy==1.26.4
+      - transformers>=4.49.0
+      - diffusers>=0.31.0
+      - xformers==0.0.28
+      - pytest>=8.0

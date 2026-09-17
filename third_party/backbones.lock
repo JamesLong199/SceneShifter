@@ -1,0 +1,74 @@
+# Official upstream mains. Do not replace these with jameslong199 forks.
+# Re-fetch and bump SHAs when promoting a new official snapshot.
+
+[backbones.multitalk]
+url = "https://github.com/MeiGen-AI/MultiTalk.git"
+ref = "main"
+sha = "c1ad84009b99ed36c97ab18e4517ca5f98692438"
+path = "third_party/multitalk"
+
+[backbones.infinitetalk]
+url = "https://github.com/MeiGen-AI/InfiniteTalk.git"
+ref = "main"
+sha = "50aa0a94184315407a991ae804d9b58d6d311ba8"
+path = "third_party/infinitetalk"
+
+[backbones.fantasy-talking]
+url = "https://github.com/Fantasy-AMAP/fantasy-talking.git"
+ref = "main"
+sha = "8c2d0c9ce2441eb02b5cf1c10d23dbab5ce06677"
+path = "third_party/fantasy-talking"
+
+[backbones.hunyuanvideo-avatar]
+url = "https://github.com/Tencent-Hunyuan/HunyuanVideo-Avatar.git"
+ref = "main"
+sha = "8c31d0d489df8418fa36a2a709ebdf0b47c7bf06"
+path = "third_party/hunyuanvideo-avatar"
+
+[backbones.wan2.2]
+url = "https://github.com/Wan-Video/Wan2.2.git"
+ref = "main"
+sha = "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
+path = "third_party/wan2.2"
+
+[backbones.videox-fun]
+url = "https://github.com/aigc-apps/VideoX-Fun.git"
+ref = "main"
+sha = "968f0e2192ba4c7a12868bf36d73260d135424ca"
+path = "third_party/videox-fun"
+
+# Test-only jameslong199 ports. Never used as third_party runtime trees.
+[reference.multitalk]
+url = "https://github.com/jameslong199/multitalk.git"
+ref = "transition"
+path = "tests/reference/multitalk"
+
+[reference.infinitetalk]
+url = "https://github.com/jameslong199/infinitetalk.git"
+ref = "exp"
+path = "tests/reference/infinitetalk"
+
+[reference.fantasy-talking]
+url = "https://github.com/jameslong199/fantasy-talking.git"
+ref = "exp"
+path = "tests/reference/fantasy-talking"
+
+[reference.hunyuanvideo-avatar]
+url = "https://github.com/jameslong199/hunyuanvideo-avatar.git"
+ref = "exp"
+path = "tests/reference/hunyuanvideo-avatar"
+
+[reference.wan2.2-s2v]
+url = "https://github.com/jameslong199/wan2.2.git"
+ref = "s2v_sceneshifter"
+path = "tests/reference/wan2.2-s2v"
+
+[reference.wan2.2-animate]
+url = "https://github.com/jameslong199/wan2.2.git"
+ref = "animate_sceneshifter"
+path = "tests/reference/wan2.2-animate"
+
+[reference.videox-fun]
+url = "https://github.com/jameslong199/videox-fun.git"
+ref = "fun_camera_sceneshifter"
+path = "tests/reference/videox-fun"

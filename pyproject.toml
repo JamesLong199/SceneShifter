@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sceneshifter"
+version = "0.1.0"
+description = "Training-free multi-scene temporal control for DiT video backbones"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.23",
+  "torch>=2.1",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+sceneshifter-generate = "sceneshifter.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sceneshifter*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "feature: shared kernel F1-F12 tests",
+  "parity: jameslong199 reference router parity",
+  "pipeline: toy pipeline inference",
+  "strict: hard-check hook tests",
+]

@@ -1,0 +1,12 @@
+name: ss-hva
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - torch==2.4.0
+      - numpy==1.24.4
+      - diffusers==0.33.0
+      - transformers>=4.50.0
+      - pytest>=8.0

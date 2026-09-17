@@ -1,0 +1,11 @@
+name: ss-fantasytalking
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - torch>=2.0.0
+      - transformers==4.46.2
+      - cupy-cuda12x
+      - pytest>=8.0
