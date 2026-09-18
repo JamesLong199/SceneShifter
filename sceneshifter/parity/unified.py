@@ -125,7 +125,7 @@ def _inject(model: Any, router: Any, adapter: str) -> List[Any]:
     from sceneshifter.hooks import inject_router
 
     targets = []
-    for attr in ("model", "dit", "transformer", "pipe", "net", "pipeline"):
+    for attr in ("model", "dit", "transformer", "pipe", "net", "pipeline", "noise_model"):
         inner = getattr(model, attr, None)
         if inner is not None:
             targets.append(inner)
@@ -323,20 +323,29 @@ def _wrap_named_classes(mod: Any, names: List[str], router: Any, adapter: str) -
             continue
         original_init = cls.__init__
 
-        def make_init(orig):
+        def make_init(orig, class_name):
             def wrapped(self, *args, **kwargs):
                 orig(self, *args, **kwargs)
-                target = getattr(self, "model", None) or getattr(self, "transformer", None) or self
+                target = (
+                    getattr(self, "model", None)
+                    or getattr(self, "dit", None)
+                    or getattr(self, "transformer", None)
+                    or getattr(self, "noise_model", None)
+                    or self
+                )
                 try:
                     _inject(target, router, adapter)
                     _maybe_set_text_embeddings(router, self, getattr(router, "config", {}))
                     _capture_null_context(self, router)
                 except Exception as exc:  # noqa: BLE001
-                    print(f"[parity-unified] inject after {name}.__init__ failed: {exc}", flush=True)
+                    print(
+                        f"[parity-unified] inject after {class_name}.__init__ failed: {exc}",
+                        flush=True,
+                    )
 
             return wrapped
 
-        cls.__init__ = make_init(original_init)
+        cls.__init__ = make_init(original_init, name)
         print(f"[parity-unified] wrapped {mod.__name__}.{name}.__init__", flush=True)
 
 

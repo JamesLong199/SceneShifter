@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 
 from sceneshifter.adapters.base import thread_timestep
-from sceneshifter.parity.unified import _install_encode_prompt_hook, _unwrap_prompt_embed
+from sceneshifter.parity.unified import _inject, _install_encode_prompt_hook, _unwrap_prompt_embed
 from sceneshifter.router import FramePromptRouter
-from tests.conftest import canonical_config
+from tests.conftest import TinyDiT, canonical_config
 
 
 def test_unwrap_diffsynth_context_dict():
@@ -62,3 +62,13 @@ def test_thread_timestep_zeros_audio_scale_before_start():
         model(x, t=float(len(model.seen) + 1), audio_scale=1.0, context=torch.ones(1, 2))
     model(x, t=99.0, audio_scale=1.0, context=torch.ones(1, 2))
     assert model.seen[-1]["audio_scale"] == 1.0
+
+
+def test_inject_finds_wan_animate_noise_model():
+    class Wrapper:
+        def __init__(self):
+            self.noise_model = TinyDiT()
+
+    router = FramePromptRouter(canonical_config(), patch_height=2, patch_width=2)
+    bound = _inject(Wrapper(), router, "wan_animate")
+    assert len(bound) >= 1
