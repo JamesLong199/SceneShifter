@@ -82,7 +82,15 @@ def find_videos(directory: Path, glob_pat: str) -> List[Path]:
 
 def overlay_routing(routing: Dict[str, Any], unified: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(routing)
-    for key in ("len_trans", "len_trans_context", "trans_timestep_range"):
+    for key in (
+        "len_trans",
+        "len_trans_context",
+        "trans_timestep_range",
+        "audio_start_timestep",
+        "ref_loc_max_timesteps",
+        "freeze_live_mask",
+        "infer_frames",
+    ):
         if unified.get(key) is not None:
             out[key] = unified[key]
     return out

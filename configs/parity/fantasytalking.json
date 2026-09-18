@@ -34,6 +34,7 @@
     "image_size": 768,
     "audio_start_timestep": 15,
     "ref_loc_max_timesteps": 9,
+    "freeze_live_mask": true,
     "len_trans": 2,
     "len_trans_context": 1,
     "trans_timestep_range": [22, 29]

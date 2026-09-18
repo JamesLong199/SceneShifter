@@ -106,23 +106,69 @@ def _inject(model: Any, router: Any, adapter: str) -> List[Any]:
     raise RuntimeError(f"inject_router failed for adapter={adapter}: {last_err}")
 
 
+def _encoder_device(pipeline: Any):
+    for attr in ("device",):
+        value = getattr(pipeline, attr, None)
+        if value is not None:
+            return value
+    for attr in ("model", "dit", "transformer"):
+        inner = getattr(pipeline, attr, None)
+        if inner is None:
+            continue
+        try:
+            return next(inner.parameters()).device
+        except StopIteration:
+            continue
+    return "cuda"
+
+
 def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, Any]) -> None:
     prompts = routing.get("segment_prompts") or []
     if not prompts or not hasattr(router, "set_text_embeddings"):
         return
     try:
         embeds = []
+        device = _encoder_device(pipeline)
         if hasattr(pipeline, "encode_prompt"):
             for prompt in prompts:
                 out = pipeline.encode_prompt(prompt)
                 embeds.append(out[0] if isinstance(out, (tuple, list)) else out)
         elif hasattr(pipeline, "text_encoder") and callable(pipeline.text_encoder):
+            encoder = pipeline.text_encoder
             for prompt in prompts:
-                embeds.append(pipeline.text_encoder([prompt])[0])
+                try:
+                    out = encoder([prompt], device)
+                except TypeError:
+                    out = encoder([prompt])
+                embeds.append(out[0] if isinstance(out, (tuple, list)) else out)
+            neg = getattr(pipeline, "sample_neg_prompt", None)
+            if neg:
+                try:
+                    null = encoder([neg], device)
+                except TypeError:
+                    null = encoder([neg])
+                router.null_text_embeddings = null[0] if isinstance(null, (tuple, list)) else null
+            _capture_null_context(pipeline, router)
         if embeds:
             router.set_text_embeddings(embeds)
+            print(f"[parity-unified] encoded {len(embeds)} segment prompts", flush=True)
     except Exception as exc:  # noqa: BLE001
         print(f"[parity-unified] text embed skip: {exc}", flush=True)
+
+
+def _capture_null_context(pipeline: Any, router: Any) -> None:
+    encoder = getattr(pipeline, "text_encoder", None)
+    if encoder is None or not callable(encoder) or getattr(encoder, "_ss_null_captured", False):
+        return
+
+    def wrapped(texts, *args, **kwargs):
+        out = encoder(texts, *args, **kwargs)
+        if isinstance(texts, (list, tuple)) and len(texts) >= 2 and isinstance(out, (list, tuple)):
+            router.null_text_embeddings = out[1]
+        return out
+
+    wrapped._ss_null_captured = True  # type: ignore[attr-defined]
+    pipeline.text_encoder = wrapped
 
 
 def _wrap_named_classes(mod: Any, names: List[str], router: Any, adapter: str) -> None:
@@ -139,6 +185,7 @@ def _wrap_named_classes(mod: Any, names: List[str], router: Any, adapter: str) -
                 try:
                     _inject(target, router, adapter)
                     _maybe_set_text_embeddings(router, self, getattr(router, "config", {}))
+                    _capture_null_context(self, router)
                 except Exception as exc:  # noqa: BLE001
                     print(f"[parity-unified] inject after {name}.__init__ failed: {exc}", flush=True)
 
@@ -157,6 +204,7 @@ def _wrap_create_pipeline(mod: Any, router: Any, adapter: str, routing: Dict[str
         pipe = original(*args, **kwargs)
         _inject(pipe, router, adapter)
         _maybe_set_text_embeddings(router, pipe, routing)
+        _capture_null_context(pipe, router)
         return pipe
 
     mod.create_pipeline = wrapped
@@ -410,6 +458,7 @@ def run_s2v_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
         "--offload_model", "True",
         "--convert_model_dtype",
         "--num_clip", str(unified.get("num_clip", 1)),
+        "--infer_frames", str(unified.get("infer_frames", 84)),
     ]
     _invoke_generate(gm, "generate.py", argv)
 

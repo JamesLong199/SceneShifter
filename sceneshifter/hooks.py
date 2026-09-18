@@ -28,6 +28,7 @@ def inject_router(
     impl = get_adapter(adapter)
     bound = impl.inject(model, router)
     if router is not None:
+        model.frame_prompt_router = router
         checks.validate_inject(bound, expected_min=expected_min)
     if official_root:
         checks.official_tree_is_clean(official_root)

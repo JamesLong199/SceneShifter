@@ -31,6 +31,7 @@
     "size": "1024*704",
     "base_seed": 43,
     "num_clip": 1,
+    "infer_frames": 84,
     "ref_loc_max_timesteps": 3,
     "len_trans": 2,
     "len_trans_context": 1,

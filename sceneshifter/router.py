@@ -153,6 +153,10 @@ class FramePromptRouter:
         self.static_bg: Optional[torch.Tensor] = None
         self.live_bg: Optional[torch.Tensor] = None
         self.live_subject_fg: Optional[torch.Tensor] = None
+        self.audio_start_timestep = int(cfg.get("audio_start_timestep", 0) or 0)
+        self.ref_loc_max_timesteps = int(cfg.get("ref_loc_max_timesteps", 15) or 0)
+        self.freeze_live_mask = bool(cfg.get("freeze_live_mask", False))
+        self.null_text_embeddings: Optional[Any] = None
         paths = cfg.get("background_mask_path")
         if paths:
             raw_fg = subject_fg_from_background_paths(paths, self.num_frames)
@@ -299,6 +303,7 @@ class FramePromptRouter:
         device: Optional[torch.device] = None,
         *,
         timestep_idx: Optional[int] = None,
+        include_transition: bool = True,
     ) -> torch.Tensor:
         """Noisy-axis K/V indices. Adapters union extras (FramePack, text)."""
         device = device or torch.device("cpu")
@@ -313,7 +318,11 @@ class FramePromptRouter:
                 start, end, self.spatial_tokens, region, bg, device
             )
             selected.append(local + start * self.spatial_tokens)
-        if timestep_idx is not None and self.should_apply_transition_context(timestep_idx):
+        if (
+            include_transition
+            and timestep_idx is not None
+            and self.should_apply_transition_context(timestep_idx)
+        ):
             for window in self.get_transition_context_windows():
                 if int(window["new_segment"]) != int(query_segment):
                     continue
@@ -393,13 +402,26 @@ class FramePromptRouter:
         min_component_size: int = 20,
         hole_size: int = 0,
     ) -> torch.Tensor:
-        live_fg = postprocess_live_fg(
-            scores,
-            drop_low_percent=drop_low_percent,
-            min_component_size=min_component_size,
-            hole_size=hole_size,
+        if bool(self.freeze_live_mask) and self.live_bg is not None:
+            return self.live_bg
+        value = scores.detach()
+        if value.ndim == 2:
+            value = value.unsqueeze(0)
+        if value.ndim != 3:
+            raise ValueError(f"expected live scores [F,HW] or [S,F,HW], got {tuple(scores.shape)}")
+        live_fg = torch.stack(
+            [
+                postprocess_live_fg(
+                    value[subject],
+                    drop_low_percent=drop_low_percent,
+                    min_component_size=min_component_size,
+                    hole_size=hole_size,
+                )
+                for subject in range(int(value.shape[0]))
+            ],
+            dim=0,
         )
-        self.live_subject_fg = live_fg.unsqueeze(0)
+        self.live_subject_fg = live_fg
         self.live_bg = live_bg_from_subject_fg(self.live_subject_fg)
         return self.live_bg
 

@@ -127,6 +127,7 @@ def _extract_qkv(args: Tuple[Any, ...], kwargs: Dict[str, Any]):
 
 def _call_official_flash(orig: Callable, name: str, q, k, v, args, kwargs, used_kw: bool):
     call_kwargs = dict(kwargs)
+    # Subset tensors are dense; original packed lengths no longer apply.
     call_kwargs.pop("q_lens", None)
     call_kwargs.pop("k_lens", None)
     if used_kw:
@@ -134,9 +135,118 @@ def _call_official_flash(orig: Callable, name: str, q, k, v, args, kwargs, used_
         call_kwargs["k"] = k
         call_kwargs["v"] = v
         return orig(**call_kwargs)
-    if name == "sageattn":
-        return orig(q, k, v, *args[3:], **call_kwargs)
     return orig(q, k, v, *args[3:], **call_kwargs)
+
+
+def _transition_query_indices(
+    router: FramePromptRouter, device: torch.device
+) -> Dict[int, torch.Tensor]:
+    by_segment: Dict[int, torch.Tensor] = {}
+    for window in router.get_transition_context_windows():
+        frames = [int(f) for f in window["query_frames"]]
+        if not frames:
+            continue
+        parts = [
+            torch.arange(
+                frame * router.spatial_tokens,
+                (frame + 1) * router.spatial_tokens,
+                device=device,
+                dtype=torch.long,
+            )
+            for frame in frames
+        ]
+        by_segment[int(window["new_segment"])] = torch.cat(parts)
+    return by_segment
+
+
+def _ref_target_masks(router: FramePromptRouter, spatial: int, device, dtype) -> Optional[torch.Tensor]:
+    subjects = getattr(router, "subject_fg_masks", None)
+    if subjects is None or subjects.numel() == 0:
+        return None
+    subject = subjects[:, 0].to(device=device, dtype=torch.float32)
+    if int(subject.shape[-1]) != int(spatial):
+        subject = torch.nn.functional.interpolate(
+            subject.unsqueeze(1), size=int(spatial), mode="nearest"
+        ).squeeze(1)
+    background = (~(subject > 0.5).any(0)).to(dtype=torch.float32).unsqueeze(0)
+    return torch.cat([subject.to(dtype=dtype), background.to(dtype=dtype)], dim=0)
+
+
+def _maybe_update_live_ref_attn(
+    router: FramePromptRouter,
+    module: nn.Module,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    timestep_idx: int,
+    block_idx: Any,
+    pass_type: str,
+) -> None:
+    if pass_type == "uncond" or bool(getattr(router, "freeze_live_mask", False)):
+        return
+    max_t = int(getattr(router, "ref_loc_max_timesteps", 0) or 0)
+    if max_t > 0 and int(timestep_idx) >= max_t:
+        return
+    block = router.active_block(int(timestep_idx), block_idx, pass_type)
+    params = (block or {}).get("params") or {}
+    if str(params.get("mask_type", "")) != "ref_attn":
+        params = {}
+        for scheduled in getattr(router, "schedule", []) or []:
+            candidate = scheduled.get("params") or {}
+            if str(candidate.get("mask_type", "")) == "ref_attn":
+                params = candidate
+                break
+    if str(params.get("mask_type", "")) != "ref_attn":
+        return
+    selectors = params.get("ref_attn_mask_selectors") or []
+    if block_idx is None:
+        return
+    wanted_heads = [
+        int(head) for layer, head in selectors if int(layer) == int(block_idx)
+    ]
+    layer_only = params.get("ref_attn_mask_layer")
+    head_only = params.get("ref_attn_mask_head")
+    if not wanted_heads and layer_only is not None:
+        if int(block_idx) != int(layer_only):
+            return
+        wanted_heads = list(range(int(q.shape[2]))) if head_only is None else [int(head_only)]
+    if not wanted_heads and not selectors:
+        # Layer-headavg: current layer, all heads.
+        wanted_heads = list(range(int(q.shape[2])))
+    if not wanted_heads:
+        return
+    spatial = int(router.spatial_tokens)
+    video = int(router.num_frames) * spatial
+    if q.shape[1] < video or k.shape[1] < spatial:
+        return
+    targets = _ref_target_masks(router, spatial, q.device, q.dtype)
+    if targets is None:
+        return
+    scale = 1.0 / float(q.shape[-1]) ** 0.5
+    video_q = q[:, :video].float() * scale
+    ref_k = k[:, :spatial].float()
+    num_subjects = int(targets.shape[0] - 1)
+    collected = []
+    for head in wanted_heads:
+        if head < 0 or head >= int(q.shape[2]):
+            continue
+        logits = torch.matmul(
+            video_q[:, :, head],
+            ref_k[:, :, head].transpose(-2, -1),
+        )
+        probs = logits.softmax(dim=-1)
+        denom = targets.sum(dim=-1).clamp_min(1.0).view(1, -1, 1)
+        scores = torch.einsum("bqr,cr->bcq", probs, targets.to(dtype=probs.dtype)) / denom
+        collected.append(scores[0, :num_subjects])
+    if not collected:
+        return
+    stacked = torch.stack(collected, dim=0).mean(0)
+    fg = stacked.view(num_subjects, router.num_frames, spatial)
+    router.update_live_mask_from_scores(
+        fg,
+        drop_low_percent=float(params.get("ref_attn_mask_drop_low_percent", 10.0)),
+        min_component_size=int(params.get("ref_attn_mask_min_component_size", 20)),
+        hole_size=int(params.get("ref_attn_mask_hole_size", 0)),
+    )
 
 
 def _query_indices(
@@ -153,7 +263,8 @@ def _query_indices(
             device=device,
             dtype=torch.long,
         )
-    return router.spatial_indices(segment, region, device)
+    local = router.spatial_indices(segment, region, device)
+    return local.to(device=device, dtype=torch.long) + int(start) * int(router.spatial_tokens)
 
 
 def scene_masked_official_flash(
@@ -173,11 +284,40 @@ def scene_masked_official_flash(
     q = router.apply_q_scale(q, block)
     extra_key_fn = getattr(module, "_ss_extra_key_fn", None)
     if block is None:
-        return _call_official_flash(orig, name, q, k, v, args, kwargs, used_kw)
+        out = _call_official_flash(orig, name, q, k, v, args, kwargs, used_kw)
+        _maybe_update_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
+        return out
 
     out = q.new_zeros(q.shape)
     video_tokens = router.num_frames * router.spatial_tokens
     extra = max(0, int(q.shape[1]) - video_tokens)
+
+    def _gather(q_idx: torch.Tensor, k_idx: torch.Tensor, segment: int) -> None:
+        k_idx = k_idx[(k_idx >= 0) & (k_idx < k.shape[1])]
+        if extra_key_fn is not None:
+            extra_k = extra_key_fn(router, k, segment)
+            if extra_k is not None and extra_k.numel():
+                k_idx = torch.unique(torch.cat([k_idx, extra_k.to(k_idx.device)]), sorted=True)
+        if extra > 0:
+            extra_idx = torch.arange(video_tokens, q.shape[1], device=q.device)
+            k_idx = torch.unique(torch.cat([k_idx, extra_idx]), sorted=True)
+        q_idx = q_idx[(q_idx >= 0) & (q_idx < video_tokens)]
+        if q_idx.numel() == 0 or k_idx.numel() == 0:
+            return
+        piece = _call_official_flash(
+            orig,
+            name,
+            q.index_select(1, q_idx),
+            k.index_select(1, k_idx),
+            v.index_select(1, k_idx),
+            args,
+            kwargs,
+            used_kw,
+        )
+        if isinstance(piece, tuple):
+            piece = piece[0]
+        out.index_copy_(1, q_idx, piece)
+
     for segment in range(router.num_segments):
         row = block["_mask"][segment]
         regions: List[Optional[str]]
@@ -190,33 +330,37 @@ def scene_masked_official_flash(
                 q_idx = _query_indices(router, segment, region, q.device)
             except ValueError:
                 q_idx = _query_indices(router, segment, None, q.device)
-            q_idx = q_idx[(q_idx >= 0) & (q_idx < video_tokens)]
             k_idx = router.noisy_key_indices(
-                block, segment, region, q.device, timestep_idx=timestep_idx
+                block,
+                segment,
+                region,
+                q.device,
+                timestep_idx=timestep_idx,
+                include_transition=False,
             )
-            k_idx = k_idx[(k_idx >= 0) & (k_idx < k.shape[1])]
-            if extra_key_fn is not None:
-                extra_k = extra_key_fn(router, k, segment)
-                if extra_k is not None and extra_k.numel():
-                    k_idx = torch.unique(torch.cat([k_idx, extra_k.to(k_idx.device)]), sorted=True)
-            if extra > 0:
-                extra_idx = torch.arange(video_tokens, q.shape[1], device=q.device)
-                k_idx = torch.unique(torch.cat([k_idx, extra_idx]), sorted=True)
-            if q_idx.numel() == 0 or k_idx.numel() == 0:
-                continue
-            piece = _call_official_flash(
-                orig,
-                name,
-                q.index_select(1, q_idx),
-                k.index_select(1, k_idx),
-                v.index_select(1, k_idx),
-                args,
-                kwargs,
-                used_kw,
+            _gather(q_idx, k_idx, segment)
+    if router.should_apply_transition_context(timestep_idx):
+        trans_q = _transition_query_indices(router, q.device)
+        for segment, q_idx in trans_q.items():
+            k_idx = router.noisy_key_indices(
+                block,
+                segment,
+                None if not isinstance(block["_mask"][segment], dict) else "fg",
+                q.device,
+                timestep_idx=timestep_idx,
+                include_transition=True,
             )
-            if isinstance(piece, tuple):
-                piece = piece[0]
-            out.index_copy_(1, q_idx, piece)
+            if isinstance(block["_mask"][segment], dict):
+                k_bg = router.noisy_key_indices(
+                    block,
+                    segment,
+                    "bg",
+                    q.device,
+                    timestep_idx=timestep_idx,
+                    include_transition=True,
+                )
+                k_idx = torch.unique(torch.cat([k_idx, k_bg]), sorted=True)
+            _gather(q_idx, k_idx, segment)
     if extra > 0:
         extra_idx = torch.arange(video_tokens, q.shape[1], device=q.device)
         piece = _call_official_flash(
@@ -232,6 +376,7 @@ def scene_masked_official_flash(
         if isinstance(piece, tuple):
             piece = piece[0]
         out.index_copy_(1, extra_idx, piece)
+    _maybe_update_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
     return out
 
 
@@ -364,6 +509,16 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
             if embed_idx is None:
                 return original(x, context, *args, **kwargs)
             text = active_router.text_embeddings[embed_idx]
+            if (
+                context is not None
+                and hasattr(context, "shape")
+                and hasattr(text, "shape")
+                and context.shape[0] == text.shape[0]
+                and context.shape[-1] == text.shape[-1]
+                and context.shape[1] > text.shape[1]
+            ):
+                prefix = context[:, : int(context.shape[1] - text.shape[1])]
+                text = torch.cat([prefix, text.to(device=context.device, dtype=context.dtype)], dim=1)
             sl = slice(start * active_router.spatial_tokens, end * active_router.spatial_tokens)
             try:
                 piece = original(x[:, sl], text, *args, **kwargs)
@@ -409,10 +564,30 @@ def thread_timestep(model: Any) -> None:
             else:
                 state["pass"] += 1
             timestep_idx = state["t_idx"]
-            if pass_type is None:
-                pass_type = "uncond" if state["pass"] == 0 else "cond"
+        router = getattr(self, "frame_prompt_router", None)
+        if router is None:
+            for module in find_attention_modules(self)[0]:
+                router = getattr(module, "frame_prompt_router", None)
+                if router is not None:
+                    break
+        if pass_type is None and router is not None:
+            context = kwargs.get("context")
+            null = getattr(router, "null_text_embeddings", None)
+            ctx0 = context[0] if isinstance(context, (list, tuple)) and context else context
+            null0 = null[0] if isinstance(null, (list, tuple)) and null else null
+            if null0 is not None and ctx0 is null0:
+                pass_type = "uncond"
+            else:
+                pass_type = "cond"
         if pass_type is None:
-            pass_type = "cond"
+            # Official MultiTalk/InfiniteTalk run cond first, then drop-audio / uncond.
+            pass_type = "cond" if state["pass"] == 0 else "uncond"
+        if router is not None:
+            start = int(getattr(router, "audio_start_timestep", 0) or 0)
+            audio = kwargs.get("audio")
+            if int(timestep_idx) < start and torch.is_tensor(audio):
+                kwargs = dict(kwargs)
+                kwargs["audio"] = torch.zeros_like(audio[:1] if audio.shape[0] > 1 else audio)
         kwargs.setdefault("timestep_idx", timestep_idx)
         kwargs.setdefault("pass_type", pass_type)
         self_mods, cross_mods = find_attention_modules(self)
