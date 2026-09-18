@@ -89,7 +89,7 @@ def test_fantasy_cross_attn_keeps_full_sequence_for_audio():
     from sceneshifter.adapters.base import wrap_cross_attention
     from sceneshifter.adapters.fantasytalking import (
         FantasyTalkingAdapter,
-        wrap_fantasy_i2v_processor,
+        wrap_fantasy_i2v_cross_module,
     )
 
     cfg = canonical_config(num_frames=4, frame_splits=[2], segment_prompts=["a", "b"])
@@ -155,21 +155,22 @@ def test_fantasy_cross_attn_keeps_full_sequence_for_audio():
     x = torch.randn(1, frames * spatial, dim)
     context = torch.randn(1, 3, dim)
     audio = torch.randn(1, frames, 2, dim)
-    wrap_fantasy_i2v_processor(attn.processor, router)
-    out = attn.processor(
-        attn,
+    wrap_fantasy_i2v_cross_module(attn, router)
+    out = attn(
         x,
         context,
         None,
         audio,
         None,
-        latents_num_frames=frames,
-        audio_scale=1.0,
+        frames,
+        1.0,
     )
     assert out.shape == x.shape
+    assert attn._ss_fantasy_cross_wrapped
 
     model = nn.Module()
-    model.cross_attn = attn
+    model.cross_attn = Attn()
+    model.cross_attn.processor = Processor()
     model.self_attn = nn.Identity()
     bound = FantasyTalkingAdapter().inject(model, router)
     assert any(getattr(m, "_ss_fantasy_cross_wrapped", False) for m in bound)

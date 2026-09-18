@@ -821,6 +821,8 @@ def thread_timestep(model: Any) -> None:
             # Official MultiTalk/InfiniteTalk run cond first, then drop-audio / uncond.
             pass_type = "cond" if state["pass"] == 0 else "uncond"
         if router is not None:
+            router._ss_timestep = timestep_idx
+            router._ss_pass = pass_type
             start = int(getattr(router, "audio_start_timestep", 0) or 0)
             if int(timestep_idx) < start:
                 kwargs = dict(kwargs)
