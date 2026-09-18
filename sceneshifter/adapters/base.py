@@ -377,11 +377,10 @@ def _ref_loc_query_for_scene_mask(
     block: Dict[str, Any],
     q: torch.Tensor,
 ) -> torch.Tensor:
-    """Official `_forward_with_scene_mask` scores ref-loc on locally re-roped new-scene Q.
+    """Official `_forward_with_scene_mask` can score ref-loc on local-rerope Q.
 
-    Auto local-rerope is off for attention when a new scene can attend scene-0
-    FG/full, but official still builds `q_segment_local` and passes that tensor
-    to `get_attn_map_with_target`. Scene 0 stays on the global-RoPE Q.
+    Kept for contract tests. Live collection stays on the post-RoPE attention Q:
+    using this stitch on 032 worsened decoded mean (6.99 -> 9.28).
     """
     q_ref = q
     replaced = False
@@ -699,15 +698,7 @@ def scene_masked_official_flash(
         if isinstance(piece, tuple):
             piece = piece[0]
         out.index_copy_(1, extra_idx, piece.to(dtype=out.dtype))
-    _collect_live_ref_attn(
-        router,
-        module,
-        _ref_loc_query_for_scene_mask(module, router, block, q),
-        k,
-        timestep_idx,
-        block_idx,
-        pass_type,
-    )
+    _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
     return out
 
 

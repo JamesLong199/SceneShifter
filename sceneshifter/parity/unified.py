@@ -408,6 +408,7 @@ def _wrap_named_classes(mod: Any, names: List[str], router: Any, adapter: str) -
                 )
                 try:
                     _inject(target, router, adapter)
+                    _maybe_gate_talking_audio_cfg(target, router, adapter)
                     _maybe_set_text_embeddings(router, self, getattr(router, "config", {}))
                     _capture_null_context(self, router)
                 except Exception as exc:  # noqa: BLE001
@@ -430,6 +431,7 @@ def _wrap_create_pipeline(mod: Any, router: Any, adapter: str, routing: Dict[str
     def wrapped(*args, **kwargs):
         pipe = original(*args, **kwargs)
         _inject(pipe, router, adapter)
+        _maybe_gate_talking_audio_cfg(pipe, router, adapter)
         _maybe_set_text_embeddings(router, pipe, routing)
         _capture_null_context(pipe, router)
         return pipe
@@ -561,6 +563,74 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     if unified.get("audio_start_timestep") is not None:
         argv += ["--audio_start_timestep", str(unified["audio_start_timestep"])]
     _invoke_generate(gm, script, argv)
+
+
+def _maybe_gate_talking_audio_cfg(target: Any, router: Any, adapter: str) -> None:
+    if adapter not in {"multitalk", "infinitetalk"}:
+        return
+    audio_start = int(getattr(router, "audio_start_timestep", 0) or 0)
+    if audio_start <= 0:
+        return
+    dit = (
+        getattr(target, "model", None)
+        or getattr(target, "dit", None)
+        or getattr(target, "transformer", None)
+        or target
+    )
+    _install_talking_audio_cfg_gate(dit, audio_start)
+
+
+def _install_talking_audio_cfg_gate(dit: Any, audio_start: int) -> None:
+    """Official-main always runs cond, drop_text, uncond.
+
+    Exp uses 2-pass before ``audio_start``: ``uncond + text*(cond-uncond)``.
+    Official-main uses ``uncond + text*(cond-drop_text) + audio*(drop_text-uncond)``
+    where drop_text is null-text + audio. After audio residual is zeroed, reuse
+    the drop_text output for uncond so the audio term is exactly 0.
+    """
+    import types
+
+    import torch
+
+    if dit is None or not hasattr(dit, "forward") or getattr(dit, "_ss_talking_audio_cfg_gated", False):
+        return
+    original = dit.forward
+    state = {"t": object(), "step": -1, "calls": 0, "drop_text": None}
+
+    def forward(self, *args, **kwargs):
+        t = kwargs.get("t", kwargs.get("timestep", kwargs.get("timesteps")))
+        if t is None and len(args) > 1:
+            t = args[1]
+        if torch.is_tensor(t):
+            key = float(t.reshape(-1)[0].detach().float().cpu())
+        else:
+            try:
+                key = float(t)
+            except (TypeError, ValueError):
+                key = t
+        if key != state["t"]:
+            state["t"] = key
+            state["step"] += 1
+            state["calls"] = 0
+            state["drop_text"] = None
+        state["calls"] += 1
+        if (
+            int(state["step"]) < int(audio_start)
+            and state["calls"] == 3
+            and state["drop_text"] is not None
+        ):
+            return state["drop_text"]
+        out = original(*args, **kwargs)
+        if int(state["step"]) < int(audio_start) and state["calls"] == 2:
+            state["drop_text"] = out
+        return out
+
+    dit.forward = types.MethodType(forward, dit)
+    dit._ss_talking_audio_cfg_gated = True
+    print(
+        f"[parity-unified] talking audio CFG gated: reuse drop_text as uncond until step {int(audio_start)}",
+        flush=True,
+    )
 
 
 def _install_fantasy_audio_cfg_gate(dit: Any, audio_start: int) -> None:
