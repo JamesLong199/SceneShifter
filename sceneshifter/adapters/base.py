@@ -502,17 +502,24 @@ def _collect_live_ref_attn(
         return
     grid = getattr(module, "_ss_grid_sizes", None)
     shape = _grid_fhw(grid, router)
+    spf = int(shape[1]) * int(shape[2])
+    if int(targets.shape[-1]) != spf:
+        # S2V packs extra motion/cond tokens; do not crash official flash.
+        return
     num_subjects = int(targets.shape[0] - 1)
     # One head at a time: a full 40-head map is ~7GB and OOMs next to the 14B DiT.
     for head in wanted_heads:
         if head < 0 or head >= int(q.shape[2]):
             continue
-        scores = get_attn_map_with_target(
-            q_score[:, :video, head : head + 1],
-            k_score[:, :, head : head + 1],
-            shape,
-            targets,
-        )
+        try:
+            scores = get_attn_map_with_target(
+                q_score[:, :video, head : head + 1],
+                k_score[:, :, head : head + 1],
+                shape,
+                targets,
+            )
+        except RuntimeError:
+            return
         if scores is None:
             continue
         if int(scores.shape[1]) != video or video % spatial != 0:

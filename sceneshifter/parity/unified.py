@@ -746,7 +746,12 @@ def run_s2v_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     meta = _metadata(cfg)
     root = Path(cfg["dataset_root"])
     routing = _load_routing(cfg)
-    router = _create_router(cfg, routing)
+    size = str(unified.get("size", "1024*704"))
+    parts = [int(part) for part in size.replace("x", "*").split("*") if part]
+    width, height = (parts + [1024, 704])[:2]
+    router = _create_router(
+        cfg, routing, patch_h=max(1, height // 16), patch_w=max(1, width // 16)
+    )
     _push_path(official)
     os.chdir(official)
     import generate as gm  # type: ignore

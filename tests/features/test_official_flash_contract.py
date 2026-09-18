@@ -204,6 +204,43 @@ def test_freeze_live_mask_still_collects_scores():
     assert (0, 0, 0) in router._ref_loc_scores
 
 
+def test_collect_skips_s2v_grid_mask_mismatch():
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[0, 0]],
+        "ref_attn_mask_drop_low_percent": 0.0,
+        "ref_attn_mask_min_component_size": 1,
+        "ref_attn_mask_hole_size": 0,
+    }
+    router = FramePromptRouter(cfg, backend="wan_s2v", patch_height=2, patch_width=2)
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    router.ref_loc_max_timesteps = 9
+
+    def fake_flash(*args, **kwargs):
+        return args[0]
+
+    q = torch.randn(1, 32, 2, 4)
+    module = _Attn()
+    module.frame_prompt_router = router
+    module._ss_timestep = 0
+    module._ss_block_idx = 0
+    module._ss_pass = "cond"
+    module._ss_grid_sizes = torch.tensor([[21, 21, 21]])
+    scene_masked_official_flash(
+        fake_flash,
+        "flash_attention",
+        module,
+        router,
+        (q, q.clone(), q.clone()),
+        {"k_lens": torch.tensor([32])},
+    )
+    assert router._ref_loc_scores == {}
+
+
 def test_scene_mask_ref_loc_q_uses_local_new_scene_rope():
     """Official scores ref-loc with locally re-roped new-scene Q, even if auto rerope is off."""
     cfg = canonical_config()
