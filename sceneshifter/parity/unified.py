@@ -130,10 +130,14 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
         embeds = []
         device = _encoder_device(pipeline)
         if hasattr(pipeline, "encode_prompt"):
-            for prompt in prompts:
-                out = pipeline.encode_prompt(prompt)
-                embeds.append(out[0] if isinstance(out, (tuple, list)) else out)
-        elif hasattr(pipeline, "text_encoder") and callable(pipeline.text_encoder):
+            try:
+                for prompt in prompts:
+                    out = pipeline.encode_prompt(prompt)
+                    embeds.append(out[0] if isinstance(out, (tuple, list)) else out)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[parity-unified] encode_prompt skip: {exc}", flush=True)
+                embeds = []
+        if not embeds and hasattr(pipeline, "text_encoder") and callable(pipeline.text_encoder):
             encoder = pipeline.text_encoder
             for prompt in prompts:
                 try:
@@ -148,7 +152,7 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
                 except TypeError:
                     null = encoder([neg])
                 router.null_text_embeddings = null[0] if isinstance(null, (tuple, list)) else null
-            _capture_null_context(pipeline, router)
+        _capture_null_context(pipeline, router)
         if embeds:
             router.set_text_embeddings(embeds)
             from sceneshifter.adapters.base import attach_text_projector, project_router_text_embeddings
