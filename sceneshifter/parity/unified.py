@@ -767,16 +767,24 @@ def run_animate_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
 def _allow_missing_flex_attention() -> None:
     """Official-main videox-fun imports lingbot/self-forcing at package import."""
     try:
-        from torch.nn.attention.flex_attention import BlockMask  # noqa: F401
+        from torch.nn.attention.flex_attention import (  # noqa: F401
+            BlockMask,
+            create_block_mask,
+            flex_attention,
+        )
         return
     except Exception:
         pass
     import sys
     import types
 
+    def _noop(*args, **kwargs):
+        return None
+
     flex = types.ModuleType("torch.nn.attention.flex_attention")
     flex.BlockMask = type("BlockMask", (), {})
-    flex.create_block_mask = lambda *args, **kwargs: None
+    flex.create_block_mask = _noop
+    flex.flex_attention = _noop
     sys.modules["torch.nn.attention.flex_attention"] = flex
 
 

@@ -226,9 +226,11 @@ def test_allow_missing_flex_attention_is_safe():
     from sceneshifter.parity.unified import _allow_missing_flex_attention
 
     _allow_missing_flex_attention()
-    import torch.nn.attention.flex_attention as flex
+    from torch.nn.attention.flex_attention import BlockMask, create_block_mask, flex_attention
 
-    assert hasattr(flex, "BlockMask")
+    assert BlockMask is not None
+    assert callable(create_block_mask)
+    assert callable(flex_attention)
 
 
 def test_inject_finds_wan_animate_noise_model():
