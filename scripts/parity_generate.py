@@ -112,6 +112,7 @@ def main() -> int:
     (out_dir / "videos").mkdir(parents=True, exist_ok=True)
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
     payload: Dict[str, Any] = {
         "side": args.side,

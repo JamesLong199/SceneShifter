@@ -220,6 +220,10 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
         return
     _install_encode_prompt_hook(pipeline, router, routing)
     try:
+        _capture_null_context(pipeline, router)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[parity-unified] capture skip: {exc}", flush=True)
+    try:
         embeds = []
         device = _encoder_device(pipeline)
         if hasattr(pipeline, "encode_prompt"):
@@ -245,7 +249,6 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
                 except TypeError:
                     null = encoder([neg])
                 router.null_text_embeddings = _unwrap_prompt_embed(null)
-        _capture_null_context(pipeline, router)
         if embeds:
             _commit_text_embeddings(router, pipeline, embeds, source="encode_prompt")
     except Exception as exc:  # noqa: BLE001
@@ -253,25 +256,46 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
 
 
 def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwargs) -> None:
-    if not (isinstance(texts, (list, tuple)) and len(texts) >= 2 and isinstance(out, (list, tuple))):
-        return
-    router.null_text_embeddings = out[1]
-    if getattr(router, "text_embeddings", None) is not None:
+    if not isinstance(texts, (list, tuple)) or not texts:
         return
     prompts = (getattr(router, "config", {}) or {}).get("segment_prompts") or []
-    neg = texts[1]
-    embeds = []
-    for prompt in prompts:
-        encoded = encode_fn([prompt, neg], *args, **kwargs)
-        embeds.append(encoded[0] if isinstance(encoded, (list, tuple)) else encoded)
-    if not embeds:
-        return
-    router.set_text_embeddings(embeds)
-    from sceneshifter.adapters.base import project_router_text_embeddings
+    if len(texts) >= 2 and isinstance(out, (list, tuple)):
+        router.null_text_embeddings = out[1]
+        if getattr(router, "text_embeddings", None) is not None:
+            return
+        neg = texts[1]
+        embeds = []
+        for prompt in prompts:
+            encoded = encode_fn([prompt, neg], *args, **kwargs)
+            embeds.append(_unwrap_prompt_embed(encoded))
+        if embeds and all(_is_text_embed(item) for item in embeds):
+            router.set_text_embeddings(embeds)
+            from sceneshifter.adapters.base import project_router_text_embeddings
 
-    project_router_text_embeddings(router)
-    dims = [tuple(t.shape) if hasattr(t, "shape") else None for t in router.text_embeddings]
-    print(f"[parity-unified] encoded {len(embeds)} segment prompts on official T5 {dims}", flush=True)
+            project_router_text_embeddings(router)
+            dims = [tuple(t.shape) if hasattr(t, "shape") else None for t in router.text_embeddings]
+            print(f"[parity-unified] encoded {len(embeds)} segment prompts on official T5 {dims}", flush=True)
+        return
+    # Wan Animate/S2V encode one prompt at a time: first call is cond, second is null.
+    if getattr(router, "text_embeddings", None) is None and prompts:
+        embeds = []
+        for prompt in prompts:
+            encoded = encode_fn([prompt], *args, **kwargs)
+            embeds.append(_unwrap_prompt_embed(encoded))
+        if embeds and all(_is_text_embed(item) for item in embeds):
+            router.set_text_embeddings(embeds)
+            from sceneshifter.adapters.base import project_router_text_embeddings
+
+            project_router_text_embeddings(router)
+            dims = [tuple(t.shape) if hasattr(t, "shape") else None for t in router.text_embeddings]
+            print(
+                f"[parity-unified] encoded {len(embeds)} segment prompts on single-prompt T5 {dims}",
+                flush=True,
+            )
+        return
+    if getattr(router, "null_text_embeddings", None) is None:
+        router.null_text_embeddings = _unwrap_prompt_embed(out)
+        print("[parity-unified] captured official null from single-prompt T5", flush=True)
 
 
 class _TextEncoderProxy:

@@ -660,6 +660,10 @@ def wrap_self_attention(
                 return original(*args, **kwargs)
             finally:
                 _CURRENT_MODULE.reset(token)
+                # Animate 1280x720 keeps ~0.8 GiB per pre-RoPE tensor; 40 layers would OOM.
+                self._ss_q_pre_rope = None
+                self._ss_k_pre_rope = None
+                self._ss_freqs = None
 
         module.forward = types.MethodType(forward, module)
         return module

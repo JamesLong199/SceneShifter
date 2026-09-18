@@ -64,6 +64,27 @@ def test_thread_timestep_zeros_audio_scale_before_start():
     assert model.seen[-1]["audio_scale"] == 1.0
 
 
+def test_record_single_prompt_t5_sets_segments_then_null():
+    from sceneshifter.parity.unified import _record_official_text_encode
+
+    cfg = canonical_config()
+    router = FramePromptRouter(cfg, backend="wan_animate", patch_height=2, patch_width=2)
+    store = {
+        "scene 0": torch.randn(1, 3, 4),
+        "scene 1": torch.randn(1, 3, 4),
+        "neg": torch.randn(1, 3, 4),
+    }
+
+    def encode_fn(texts, *args, **kwargs):
+        return store[texts[0]]
+
+    _record_official_text_encode(router, encode_fn, ["scene 0"], store["scene 0"], (), {})
+    assert router.text_embeddings[0] is store["scene 0"]
+    assert router.text_embeddings[1] is store["scene 1"]
+    _record_official_text_encode(router, encode_fn, ["neg"], store["neg"], (), {})
+    assert router.null_text_embeddings is store["neg"]
+
+
 def test_inject_finds_wan_animate_noise_model():
     class Wrapper:
         def __init__(self):
