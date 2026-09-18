@@ -332,6 +332,8 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
         "--input_json", str(input_json),
         "--base_seed", str(unified.get("base_seed", 43)),
         "--save_file", str(save),
+        "--offload_model", "True",
+        "--color_correction_strength", "0",
     ]
     if unified.get("infinitetalk_dir"):
         argv += ["--infinitetalk_dir", str(unified["infinitetalk_dir"])]
