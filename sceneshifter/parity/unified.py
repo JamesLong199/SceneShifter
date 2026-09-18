@@ -58,9 +58,11 @@ def _write_input_json(cfg: Dict[str, Any], out_dir: Path) -> Path:
     root = Path(cfg.get("dataset_root"))
     routing = meta.get("frame_prompt_routing") or {}
     prompt = meta.get("prompt") or (routing.get("segment_prompts") or ["a person talking"])[0]
+    image = _resolve_media(root, meta.get("cond_image"))
     payload = {
         "prompt": prompt,
-        "cond_image": _resolve_media(root, meta.get("cond_image")),
+        "cond_image": image,
+        "cond_video": image,
         "cond_audio": _resolve_media(root, meta.get("cond_audio")),
         "audio_type": meta.get("audio_type", "para"),
     }

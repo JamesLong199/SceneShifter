@@ -21,7 +21,8 @@
       "--len_trans_context", "1",
       "--trans_timestep_range", "30", "39",
       "--ids", "032",
-      "--overwrite"
+      "--overwrite",
+      "--offload_model", "True"
     ]
   },
   "unified": {
