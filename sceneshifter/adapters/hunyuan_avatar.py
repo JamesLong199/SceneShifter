@@ -476,8 +476,40 @@ def _wrap_block(module: nn.Module, router: FramePromptRouter, block_idx: int) ->
     module.forward = types.MethodType(forward, module)
 
 
+def _find_hy_transformer(model: Any) -> Any:
+    seen = set()
+    queue = [model]
+    while queue:
+        obj = queue.pop(0)
+        if obj is None or id(obj) in seen:
+            continue
+        seen.add(id(obj))
+        if type(obj).__name__ == "HYVideoDiffusionTransformer":
+            return obj
+        for attr in ("model", "dit", "transformer", "pipeline", "pipe", "noise_model"):
+            queue.append(getattr(obj, attr, None))
+        if hasattr(obj, "named_modules"):
+            try:
+                for _, module in obj.named_modules():
+                    if type(module).__name__ == "HYVideoDiffusionTransformer":
+                        return module
+            except Exception:
+                continue
+    return model
+
+
 def _iter_hy_blocks(model: Any) -> List[Any]:
-    found = []
+    found: List[Any] = []
+    for attr in ("double_blocks", "single_blocks"):
+        blocks = getattr(model, attr, None)
+        if blocks is None:
+            continue
+        try:
+            found.extend(list(blocks))
+        except TypeError:
+            continue
+    if found:
+        return found
     if not hasattr(model, "named_modules"):
         return found
     for _, module in model.named_modules():
@@ -537,15 +569,15 @@ def install_hunyuan_text_refine(transformer: Any, router: FramePromptRouter) -> 
 
 
 def wrap_hunyuan_transformer(model: Any, router: Optional[FramePromptRouter]) -> List[Any]:
-    target = model
-    if type(model).__name__ != "HYVideoDiffusionTransformer" and hasattr(model, "named_modules"):
-        for _, module in model.named_modules():
-            if type(module).__name__ == "HYVideoDiffusionTransformer":
-                target = module
-                break
+    target = _find_hy_transformer(model)
     if router is not None:
         apply_hunyuan_official_masks(router)
     blocks = _iter_hy_blocks(target)
+    print(
+        f"[hunyuan-adapter] wrap target={type(target).__name__} "
+        f"from={type(model).__name__} blocks={len(blocks)}",
+        flush=True,
+    )
     for idx, module in enumerate(blocks):
         _wrap_block(module, router, idx)
     for _name, mod in list(sys.modules.items()):
