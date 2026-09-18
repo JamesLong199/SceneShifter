@@ -509,16 +509,23 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
             if embed_idx is None:
                 return original(x, context, *args, **kwargs)
             text = active_router.text_embeddings[embed_idx]
+            if not torch.is_tensor(text) or not torch.is_tensor(context):
+                return original(x, context, *args, **kwargs)
+            if text.ndim == context.ndim - 1:
+                text = text.unsqueeze(0)
             if (
-                context is not None
-                and hasattr(context, "shape")
-                and hasattr(text, "shape")
-                and context.shape[0] == text.shape[0]
-                and context.shape[-1] == text.shape[-1]
-                and context.shape[1] > text.shape[1]
+                text.ndim != context.ndim
+                or text.shape[0] != context.shape[0]
+                or text.shape[-1] != context.shape[-1]
             ):
+                return original(x, context, *args, **kwargs)
+            if context.shape[1] > text.shape[1]:
                 prefix = context[:, : int(context.shape[1] - text.shape[1])]
-                text = torch.cat([prefix, text.to(device=context.device, dtype=context.dtype)], dim=1)
+                text = torch.cat(
+                    [prefix, text.to(device=context.device, dtype=context.dtype)], dim=1
+                )
+            elif tuple(text.shape) != tuple(context.shape):
+                return original(x, context, *args, **kwargs)
             sl = slice(start * active_router.spatial_tokens, end * active_router.spatial_tokens)
             try:
                 piece = original(x[:, sl], text, *args, **kwargs)
