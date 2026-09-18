@@ -605,6 +605,35 @@ def _install_fantasy_audio_cfg_gate(dit: Any, audio_start: int) -> None:
     )
 
 
+def _mux_fantasy_audio(video_mp4: Path, audio_path: str, dest: Path) -> None:
+    """Mux with the env ffmpeg next to sys.executable. Keep the video if mux fails."""
+    import shutil
+    import subprocess
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    ffmpeg = shutil.which("ffmpeg") or str(Path(sys.executable).resolve().parent / "ffmpeg")
+    if Path(ffmpeg).is_file():
+        cmd = [
+            str(ffmpeg), "-y",
+            "-i", str(video_mp4),
+            "-i", str(audio_path),
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            "-shortest",
+            str(dest),
+        ]
+        print(f"[parity-unified] mux {' '.join(cmd)}", flush=True)
+        try:
+            subprocess.check_call(cmd)
+            video_mp4.unlink(missing_ok=True)
+            return
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"[parity-unified] ffmpeg mux failed: {exc}", flush=True)
+    else:
+        print(f"[parity-unified] ffmpeg missing at {ffmpeg}; keeping video-only", flush=True)
+    shutil.copy2(video_mp4, dest)
+
+
 def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None:
     import librosa
     import torch
@@ -701,10 +730,7 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     save.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_dir / "videos" / f"tmp_{cfg['sample_id']}.mp4"
     save_video(video, str(tmp), fps=fps, quality=5)
-    os.system(
-        f'ffmpeg -y -i "{tmp}" -i "{audio_path}" -c:v libx264 -c:a aac -shortest "{save}"'
-    )
-    tmp.unlink(missing_ok=True)
+    _mux_fantasy_audio(tmp, audio_path, save)
     _ = Image
 
 

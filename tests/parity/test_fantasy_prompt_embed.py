@@ -270,6 +270,27 @@ def test_allow_missing_flex_attention_is_safe():
     assert callable(flex_attention)
 
 
+def test_mux_fantasy_audio_uses_env_ffmpeg(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from sceneshifter.parity.unified import _mux_fantasy_audio
+
+    src = tmp_path / "tmp.mp4"
+    dest = tmp_path / "out.mp4"
+    audio = tmp_path / "a.wav"
+    src.write_bytes(b"video")
+    audio.write_bytes(b"audio")
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "ffmpeg").write_text("#!/bin/sh\nexit 1\n")
+    (fake / "ffmpeg").chmod(0o755)
+    monkeypatch.setattr("sys.executable", str(fake / "python"))
+    monkeypatch.delenv("PATH", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path / "missing"))
+    _mux_fantasy_audio(src, str(audio), dest)
+    assert dest.read_bytes() == b"video"
+
+
 def test_fun_clip_image_uses_uncropped_cond():
     import inspect
 
