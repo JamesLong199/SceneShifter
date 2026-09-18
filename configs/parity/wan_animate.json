@@ -1,0 +1,44 @@
+{
+  "backbone": "wan_animate",
+  "sample_id": "012",
+  "conda_env": "wans2v",
+  "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
+  "metadata": "configs/parity/assets/wan_animate_012_frame_prompt.json",
+  "official_run_dir": "/tmp/wan_animate_mask_demo_self/exp_012",
+  "reference": {
+    "repo": "/data/home/jzlong/codes/Wan2.2-animate",
+    "branch": "animate_sceneshifter",
+    "script": "generate.py",
+    "extra_args": [
+      "--task", "animate-14B",
+      "--size", "1280*720",
+      "--ckpt_dir", "/mnt/whuscs/ljz/Wan2.2-Animate-14B",
+      "--src_root_path", "/data/home/jzlong/data/SceneShifter_dataset/results/sceneshifter_unified_parity_0918/_assets/wan_animate_012/process",
+      "--refert_num", "1",
+      "--prompt", "The man walks along an aisle in indoor supermarket, speaking to the camera.",
+      "--frame_prompt_config", "/data/home/jzlong/data/SceneShifter_dataset/results/sceneshifter_unified_parity_0918/_assets/wan_animate_012/012_frame_prompt.json",
+      "--base_seed", "4",
+      "--sample_guide_scale", "5",
+      "--ref_loc_max_timesteps", "1",
+      "--len_trans", "2",
+      "--len_trans_context", "1",
+      "--trans_timestep_range", "15", "19"
+    ]
+  },
+  "unified": {
+    "official_root": "third_party/wan2.2",
+    "official_script": "generate.py",
+    "task": "animate-14B",
+    "size": "1280*720",
+    "ckpt_dir": "/mnt/whuscs/ljz/Wan2.2-Animate-14B",
+    "src_root_path": "/data/home/jzlong/data/SceneShifter_dataset/results/sceneshifter_unified_parity_0918/_assets/wan_animate_012/process",
+    "prompt": "The man walks along an aisle in indoor supermarket, speaking to the camera.",
+    "base_seed": 4,
+    "sample_guide_scale": 5,
+    "ref_loc_max_timesteps": 1,
+    "len_trans": 2,
+    "len_trans_context": 1,
+    "trans_timestep_range": [15, 19]
+  },
+  "expected_video_glob": "*.mp4"
+}

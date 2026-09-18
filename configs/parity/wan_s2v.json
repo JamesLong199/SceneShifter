@@ -1,0 +1,39 @@
+{
+  "backbone": "wan_s2v",
+  "sample_id": "032",
+  "conda_env": "wans2v",
+  "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
+  "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/032_metadata.json",
+  "official_run_dir": "/data/home/jzlong/data/SceneShifter_dataset/results/wans2v_sceneshifter_q09_ref3_trans2_1_t30_39_seed43_0803",
+  "reference": {
+    "repo": "/data/home/jzlong/codes/Wan2.2",
+    "branch": "s2v_sceneshifter",
+    "script": "batch_generate_sceneshifter.py",
+    "extra_args": [
+      "--metadata_format", "sceneshifter",
+      "--metadata_glob", "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/*_metadata.json",
+      "--ckpt_dir", "/mnt/whuscs/ljz/Wan2.2-S2V-14B",
+      "--base_seed", "43",
+      "--num_clip", "1",
+      "--ref_loc_max_timesteps", "3",
+      "--len_trans", "2",
+      "--len_trans_context", "1",
+      "--trans_timestep_range", "30", "39",
+      "--ids", "032",
+      "--overwrite"
+    ]
+  },
+  "unified": {
+    "official_root": "third_party/wan2.2",
+    "official_script": "generate.py",
+    "task": "s2v-14B",
+    "ckpt_dir": "/mnt/whuscs/ljz/Wan2.2-S2V-14B",
+    "base_seed": 43,
+    "num_clip": 1,
+    "ref_loc_max_timesteps": 3,
+    "len_trans": 2,
+    "len_trans_context": 1,
+    "trans_timestep_range": [30, 39]
+  },
+  "expected_video_glob": "*032*.mp4"
+}

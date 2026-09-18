@@ -18,7 +18,10 @@ class FantasyTalkingAdapter(Adapter):
             for _, module in model.named_modules():
                 processor = getattr(module, "processor", None)
                 if processor is not None:
-                    processor.frame_prompt_router = router
+                    if hasattr(processor, "forward"):
+                        wrap_self_attention(processor, router)
+                    else:
+                        processor.frame_prompt_router = router
                     bound.append(processor)
         thread_timestep(model)
         return bound

@@ -226,6 +226,43 @@ class FramePromptRouter:
     ) -> Optional[Dict[str, Any]]:
         return policy_active_block(self.schedule, timestep_idx, block_idx, pass_type)
 
+    def get_active_attention_control_block(
+        self,
+        timestep_idx: int,
+        block_idx: Optional[int] = None,
+        pass_type: str = "cond",
+    ) -> Optional[Dict[str, Any]]:
+        return self.active_block(timestep_idx, block_idx, pass_type)
+
+    def get_active_attention_control_blocks(
+        self,
+        timestep_idx: int,
+        pass_type: str = "cond",
+    ) -> List[Dict[str, Any]]:
+        block = self.active_block(int(timestep_idx), None, pass_type)
+        return [] if block is None else [block]
+
+    def should_route(self) -> bool:
+        return bool(self.enabled)
+
+    def should_apply_scene_mask(
+        self,
+        timestep_idx: Optional[int],
+        block_idx: Optional[int] = None,
+        pass_type: str = "cond",
+    ) -> bool:
+        if timestep_idx is None:
+            return False
+        return self.active_block(int(timestep_idx), block_idx, pass_type) is not None
+
+    def should_apply_schedule_to_block(
+        self,
+        timestep_idx: Optional[int],
+        block_idx: Optional[int],
+        pass_type: str = "cond",
+    ) -> bool:
+        return self.should_apply_scene_mask(timestep_idx, block_idx, pass_type)
+
     def get_self_attention_mask(
         self,
         timestep_idx: int,

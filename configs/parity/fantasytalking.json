@@ -1,0 +1,41 @@
+{
+  "backbone": "fantasytalking",
+  "sample_id": "032",
+  "conda_env": "multitalk",
+  "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
+  "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L25H26_L39H25/032_metadata.json",
+  "official_run_dir": "/data/home/jzlong/data/SceneShifter_dataset/results/fantasytalking_at15_v2_ref_attn_avg_L37H32_L25H26_L39H25_reft9_tstart2_frozenmask_seed43_lt2_lc1_tt22-29",
+  "reference": {
+    "repo": "/data/home/jzlong/codes/fantasy-talking",
+    "branch": "exp",
+    "script": "batch_generate_sceneshifter.py",
+    "extra_args": [
+      "--metadata_glob", "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L25H26_L39H25/*_metadata.json",
+      "--wan_model_dir", "/mnt/whuscs/ljz/Playmate2/Wan2.1-I2V-14B-720P",
+      "--fantasytalking_model_path", "/mnt/whuscs/ljz/fantasy-talking/models/fantasytalking_model.ckpt",
+      "--wav2vec_model_dir", "/mnt/whuscs/ljz/fantasy-talking/wav2vec2-base-960h",
+      "--base_seed", "43",
+      "--audio_start_timestep", "15",
+      "--ref_loc_max_timesteps", "9",
+      "--len_trans", "2",
+      "--len_trans_context", "1",
+      "--trans_timestep_range", "22", "29",
+      "--ids", "032",
+      "--overwrite"
+    ]
+  },
+  "unified": {
+    "official_root": "third_party/fantasy-talking",
+    "official_script": "infer.py",
+    "wan_model_dir": "/mnt/whuscs/ljz/Playmate2/Wan2.1-I2V-14B-720P",
+    "fantasytalking_model_path": "/mnt/whuscs/ljz/fantasy-talking/models/fantasytalking_model.ckpt",
+    "wav2vec_model_dir": "/mnt/whuscs/ljz/fantasy-talking/wav2vec2-base-960h",
+    "base_seed": 43,
+    "audio_start_timestep": 15,
+    "ref_loc_max_timesteps": 9,
+    "len_trans": 2,
+    "len_trans_context": 1,
+    "trans_timestep_range": [22, 29]
+  },
+  "expected_video_glob": "*032*.mp4"
+}
