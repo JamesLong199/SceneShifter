@@ -32,7 +32,6 @@
     "wav2vec_model_dir": "/mnt/whuscs/ljz/fantasy-talking/wav2vec2-base-960h",
     "base_seed": 43,
     "image_size": 768,
-    "num_persistent_param_in_dit": 0,
     "audio_start_timestep": 15,
     "ref_loc_max_timesteps": 9,
     "len_trans": 2,

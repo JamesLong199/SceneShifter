@@ -60,3 +60,37 @@ class S2VTokenLayout:
     @property
     def total_tokens(self) -> int:
         return self.framepack_slice.stop
+
+
+@dataclass(frozen=True)
+class HunyuanMMDiTLayout:
+    """``[reference | video | text]`` joint attention used by Hunyuan Avatar."""
+
+    video_frames: int
+    spatial_tokens: int
+    text_tokens: int = 0
+    reference_frames: int = 1
+
+    def __post_init__(self) -> None:
+        if self.video_frames < 1 or self.spatial_tokens < 1:
+            raise ValueError("video_frames and spatial_tokens must be positive")
+        if self.reference_frames != 1:
+            raise ValueError("Hunyuan Avatar prepends exactly one reference frame")
+        if self.text_tokens < 0:
+            raise ValueError("text_tokens must be >= 0")
+
+    @property
+    def ref_length(self) -> int:
+        return self.reference_frames * self.spatial_tokens
+
+    @property
+    def video_tokens(self) -> int:
+        return self.video_frames * self.spatial_tokens
+
+    @property
+    def img_seq_len(self) -> int:
+        return self.ref_length + self.video_tokens
+
+    @property
+    def total_tokens(self) -> int:
+        return self.img_seq_len + self.text_tokens

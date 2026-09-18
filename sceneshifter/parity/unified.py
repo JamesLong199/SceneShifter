@@ -89,11 +89,12 @@ def _create_router(cfg: Dict[str, Any], routing: Dict[str, Any], patch_h: int = 
 def _inject(model: Any, router: Any, adapter: str) -> List[Any]:
     from sceneshifter.hooks import inject_router
 
-    targets = [model]
+    targets = []
     for attr in ("model", "dit", "transformer", "pipe", "net", "pipeline"):
         inner = getattr(model, attr, None)
         if inner is not None:
             targets.append(inner)
+    targets.append(model)
     last_err: Optional[Exception] = None
     for target in targets:
         try:
@@ -309,8 +310,9 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device="cuda")
     fantasytalking = FantasyTalkingAudioConditionModel(pipe.dit, 768, 2048).to("cuda")
     fantasytalking.load_audio_processor(unified["fantasytalking_model_path"], pipe.dit)
+    persist = unified.get("num_persistent_param_in_dit", None)
     pipe.enable_vram_management(
-        num_persistent_param_in_dit=int(unified.get("num_persistent_param_in_dit", 0) or 0)
+        num_persistent_param_in_dit=None if persist in (None, "", "none") else int(persist)
     )
     wav2vec_processor = Wav2Vec2Processor.from_pretrained(unified["wav2vec_model_dir"])
     wav2vec = Wav2Vec2Model.from_pretrained(unified["wav2vec_model_dir"]).to("cuda")
@@ -327,6 +329,8 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     fps = 23
     num_frames = min(int(fps * duration // 4) * 4 + 5, 81)
     audio_wav2vec_fea = get_audio_features(wav2vec, wav2vec_processor, audio_path, fps, num_frames)
+    wav2vec.to("cpu")
+    torch.cuda.empty_cache()
     image = resize_image_by_longest_edge(image_path, int(unified.get("image_size", 768)))
     width, height = image.size
     audio_proj_fea = fantasytalking.get_proj_fea(audio_wav2vec_fea)
@@ -580,7 +584,11 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     model_args = sanity_check_args(parser.parse_args(argv))
     device = torch.device("cuda")
     sampler = HunyuanVideoSampler.from_pretrained(model_args.ckpt, args=model_args, device=device)
-    _inject(sampler, router, "hunyuan_avatar")
+    from sceneshifter.adapters.hunyuan_avatar import install_hunyuan_prompt_routing
+
+    install_hunyuan_prompt_routing(sampler.pipeline, router, routing, meta)
+    bound = _inject(sampler, router, "hunyuan_avatar")
+    print(f"[parity-unified] hunyuan bound {len(bound)} MMDiT blocks", flush=True)
     _maybe_set_text_embeddings(router, sampler, routing)
 
     whisper_path = os.path.join(unified["model_base"], "ckpts", "whisper-tiny")
