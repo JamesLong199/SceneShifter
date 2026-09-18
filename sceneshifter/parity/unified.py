@@ -619,7 +619,9 @@ def run_animate_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
 
 def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None:
     import torch
+    from diffusers import FlowMatchEulerDiscreteScheduler
     from omegaconf import OmegaConf
+    from PIL import Image
     from transformers import AutoTokenizer
 
     unified = cfg["unified"]
@@ -636,8 +638,12 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     )
     from videox_fun.pipeline import WanFunControlPipeline  # type: ignore
     from videox_fun.data.dataset_image_video import process_pose_file  # type: ignore
-    from videox_fun.utils.fm_solvers_unipc import FlowUniPCMultistepScheduler  # type: ignore
     from videox_fun.utils.utils import get_image_latent, save_videos_grid  # type: ignore
+
+    try:
+        from videox_fun.utils.utils import filter_kwargs  # type: ignore
+    except Exception:  # noqa: BLE001
+        filter_kwargs = lambda cls, kwargs: kwargs  # noqa: E731
 
     config_path = official / "config/wan2.1/wan_civitai.yaml"
     config = OmegaConf.load(str(config_path))
@@ -658,12 +664,18 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     text_encoder = WanT5EncoderModel.from_pretrained(
         os.path.join(ckpt, config["text_encoder_kwargs"].get("text_encoder_subpath", "text_encoder")),
         additional_kwargs=OmegaConf.to_container(config["text_encoder_kwargs"]),
-    ).to(weight_dtype)
+        low_cpu_mem_usage=True,
+        torch_dtype=weight_dtype,
+    ).eval()
     clip = CLIPModel.from_pretrained(
         os.path.join(ckpt, config["image_encoder_kwargs"].get("image_encoder_subpath", "image_encoder"))
-    ).to(weight_dtype)
-    scheduler = FlowUniPCMultistepScheduler(
-        **OmegaConf.to_container(config["scheduler_kwargs"])
+    ).to(weight_dtype).eval()
+    # Official Fun Camera 092 uses Flow (Euler) + pipeline shift=3, not UniPC.
+    scheduler = FlowMatchEulerDiscreteScheduler(
+        **filter_kwargs(
+            FlowMatchEulerDiscreteScheduler,
+            OmegaConf.to_container(config["scheduler_kwargs"]),
+        )
     )
     pipeline = WanFunControlPipeline(
         transformer=transformer,
@@ -674,28 +686,41 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
         clip_image_encoder=clip,
     )
     pipeline.to("cuda")
-    router = _create_router(cfg, routing, patch_h=40, patch_w=40)
+    sample_size = list(unified.get("sample_size") or [640, 640])
+    router = _create_router(
+        cfg, routing, patch_h=max(1, int(sample_size[0]) // 16), patch_w=max(1, int(sample_size[1]) // 16)
+    )
     _inject(pipeline.transformer, router, "wan_fun_camera")
     _maybe_set_text_embeddings(router, pipeline, routing)
 
     image = _resolve_media(root, meta.get("cond_image"))
-    sample_size = unified.get("sample_size") or [640, 640]
     camera_txt = unified.get("control_camera_txt", "asset/Zoom_Out.txt")
     if not Path(camera_txt).is_absolute():
         camera_txt = str(official / camera_txt)
+    video_length = int(unified.get("video_length", 81))
     control = process_pose_file(camera_txt, sample_size[1], sample_size[0])
-    start = get_image_latent(image, sample_size=sample_size)
+    control = control[:video_length].permute([3, 0, 1, 2]).unsqueeze(0)
+    start = get_image_latent(image, sample_size=sample_size, resize_mode="centercrop")
+    clip_image = Image.open(image).convert("RGB")
     generator = torch.Generator(device="cuda").manual_seed(int(unified.get("seed", 43)))
     prompts = routing.get("segment_prompts") or [meta.get("prompt") or ""]
+    negative = unified.get(
+        "negative_prompt",
+        "Twisted body, limb deformities, text captions, comic, static, ugly, error, messy code, blurry, low quality, watermark, subtitles.",
+    )
     video = pipeline(
-        prompt=prompts[0],
-        video_length=81,
+        prompts[0],
+        num_frames=video_length,
+        negative_prompt=negative,
         height=sample_size[0],
         width=sample_size[1],
         generator=generator,
+        guidance_scale=float(unified.get("guidance_scale", 6.0)),
         num_inference_steps=int(unified.get("num_inference_steps", 50)),
         start_image=start,
         control_camera_video=control,
+        clip_image=clip_image,
+        shift=int(unified.get("shift", 3)),
     ).videos
     save = out_dir / "videos" / f"{cfg['sample_id']}_sceneshifter.mp4"
     save.parent.mkdir(parents=True, exist_ok=True)

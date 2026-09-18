@@ -26,7 +26,11 @@
     "control_camera_txt": "asset/Zoom_Out.txt",
     "seed": 43,
     "num_inference_steps": 50,
-    "sample_size": [640, 640]
+    "sample_size": [640, 640],
+    "video_length": 81,
+    "guidance_scale": 6.0,
+    "shift": 3,
+    "negative_prompt": "Twisted body, limb deformities, text captions, comic, static, ugly, error, messy code, blurry, low quality, watermark, subtitles."
   },
   "expected_video_glob": "*.mp4"
 }
