@@ -270,6 +270,21 @@ def test_allow_missing_flex_attention_is_safe():
     assert callable(flex_attention)
 
 
+def test_encoder_device_prefers_offloaded_t5():
+    class Enc(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.zeros(2))
+
+    class Pipe:
+        device = "cuda"
+        text_encoder = Enc()
+
+    from sceneshifter.parity.unified import _encoder_device
+
+    assert _encoder_device(Pipe()) == torch.device("cpu")
+
+
 def test_mux_fantasy_audio_uses_env_ffmpeg(tmp_path, monkeypatch):
     from pathlib import Path
 

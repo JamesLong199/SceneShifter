@@ -142,6 +142,13 @@ def _inject(model: Any, router: Any, adapter: str) -> List[Any]:
 
 
 def _encoder_device(pipeline: Any):
+    """Use the T5 parameter device. Wan S2V offload keeps the encoder on CPU."""
+    encoder = getattr(pipeline, "text_encoder", None)
+    if encoder is not None:
+        try:
+            return next(encoder.parameters()).device
+        except (StopIteration, Exception):
+            pass
     for attr in ("device",):
         value = getattr(pipeline, attr, None)
         if value is not None:
@@ -154,7 +161,7 @@ def _encoder_device(pipeline: Any):
             return next(inner.parameters()).device
         except StopIteration:
             continue
-    return "cuda"
+    return "cpu"
 
 
 def _unwrap_prompt_embed(out: Any) -> Any:
