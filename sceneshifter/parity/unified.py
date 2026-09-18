@@ -202,17 +202,42 @@ def _install_encode_prompt_hook(pipeline: Any, router: Any, routing: Dict[str, A
         return
     state = {"busy": False}
 
-    def wrapped(prompt, positive=True, *args, **kwargs):
-        out = original(prompt, positive=positive, *args, **kwargs)
+    try:
+        params = inspect.signature(original).parameters
+    except (TypeError, ValueError):
+        params = {}
+
+    def _call_original(prompt, *, positive: bool = True, **kwargs):
+        call_kwargs = dict(kwargs)
+        if "positive" in params:
+            call_kwargs["positive"] = positive
+        elif not positive and "do_classifier_free_guidance" in params:
+            call_kwargs.setdefault("do_classifier_free_guidance", False)
+        return original(prompt, **call_kwargs)
+
+    def wrapped(*args, **kwargs):
+        prompt = args[0] if args else kwargs.get("prompt")
+        positive = kwargs.pop("positive", True)
+        extra = args[1:]
+        call_kwargs = dict(kwargs)
+        if extra and "positive" in params:
+            out = original(prompt, *extra, **call_kwargs)
+        elif extra:
+            # Fun Camera: encode_prompt(prompt, negative_prompt=...) uses keywords only.
+            out = original(prompt, *extra, **call_kwargs)
+        else:
+            out = _call_original(prompt, positive=positive, **call_kwargs)
         if not positive:
             router.null_text_embeddings = _unwrap_prompt_embed(out)
             print("[parity-unified] captured official null prompt embed", flush=True)
-        elif not state["busy"] and getattr(router, "text_embeddings", None) is None:
+        elif isinstance(out, tuple) and len(out) >= 2 and out[1] is not None:
+            router.null_text_embeddings = _unwrap_prompt_embed(out[1])
+        if positive and not state["busy"] and getattr(router, "text_embeddings", None) is None:
             prompts = routing.get("segment_prompts") or []
             if prompts:
                 state["busy"] = True
                 try:
-                    embeds = [original(seg, positive=True) for seg in prompts]
+                    embeds = [_call_original(seg, positive=True) for seg in prompts]
                     # Keep raw T5 (4096). Official DiT projects after it onloads.
                     _commit_text_embeddings(
                         router, pipeline, embeds, source="encode_prompt hook", project=False
@@ -788,6 +813,27 @@ def _allow_missing_flex_attention() -> None:
     sys.modules["torch.nn.attention.flex_attention"] = flex
 
 
+def _fun_center_crop_pil(image_path: str, sample_size: List[int]):
+    """Match VideoX-Fun SceneShifter ``resize_and_centercrop_pil`` (bilinear cover crop)."""
+    import math
+
+    import numpy as np
+    import torch
+    import torchvision.transforms.functional as TF
+    from PIL import Image
+
+    image = Image.open(image_path).convert("RGB")
+    target_h, target_w = int(sample_size[0]), int(sample_size[1])
+    scale = max(target_h / float(image.height), target_w / float(image.width))
+    final_h = max(target_h, int(math.ceil(scale * image.height)))
+    final_w = max(target_w, int(math.ceil(scale * image.width)))
+    resized = image.resize((final_w, final_h), resample=Image.BILINEAR)
+    tensor = torch.from_numpy(np.array(resized))[None, ...].permute(0, 3, 1, 2).contiguous()
+    cropped = TF.center_crop(tensor, [target_h, target_w])
+    arr = cropped[0].permute(1, 2, 0).cpu().numpy().astype("uint8")
+    return Image.fromarray(arr)
+
+
 def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None:
     import torch
     from diffusers import FlowMatchEulerDiscreteScheduler
@@ -872,8 +918,9 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     video_length = int(unified.get("video_length", 81))
     control = process_pose_file(camera_txt, sample_size[1], sample_size[0])
     control = control[:video_length].permute([3, 0, 1, 2]).unsqueeze(0)
-    start = get_image_latent(image, sample_size=sample_size, resize_mode="centercrop")
-    clip_image = Image.open(image).convert("RGB")
+    cropped = _fun_center_crop_pil(image, sample_size)
+    start = get_image_latent(cropped, sample_size=sample_size)
+    clip_image = cropped
     generator = torch.Generator(device="cuda").manual_seed(int(unified.get("seed", 43)))
     prompts = routing.get("segment_prompts") or [meta.get("prompt") or ""]
     negative = unified.get(

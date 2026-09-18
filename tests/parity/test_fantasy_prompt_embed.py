@@ -18,6 +18,27 @@ def test_unwrap_diffsynth_context_dict():
     assert _unwrap_prompt_embed([tensor]) is tensor
 
 
+def test_encode_prompt_hook_fun_camera_signature():
+    cfg = canonical_config()
+    router = FramePromptRouter(cfg, backend="wan_fun_camera", patch_height=2, patch_width=2)
+    pos = {"a": torch.randn(1, 3, 4), "b": torch.randn(1, 3, 4)}
+    neg = torch.randn(1, 3, 4)
+
+    class Pipe:
+        def encode_prompt(self, prompt, negative_prompt=None, do_classifier_free_guidance=True):
+            if do_classifier_free_guidance:
+                return pos.get(prompt, pos["a"]), neg
+            return pos[prompt], None
+
+    pipe = Pipe()
+    _install_encode_prompt_hook(pipe, router, {"segment_prompts": ["a", "b"]})
+    out = pipe.encode_prompt("a", negative_prompt="bad")
+    assert out[0] is pos["a"]
+    assert router.text_embeddings is not None
+    assert router.text_embeddings[0] is pos["a"]
+    assert router.null_text_embeddings is neg
+
+
 def test_encode_prompt_hook_captures_null_and_segments():
     cfg = canonical_config()
     router = FramePromptRouter(cfg, backend="fantasytalking", patch_height=2, patch_width=2)
