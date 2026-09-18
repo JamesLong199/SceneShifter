@@ -399,6 +399,11 @@ def thread_timestep(model: Any) -> None:
             module._ss_timestep = timestep_idx
             module._ss_pass = pass_type
             module._ss_block_idx = idx if module in self_mods else idx - len(self_mods)
+        # Official Wan/Hunyuan forwards do not accept these bookkeeping kwargs.
+        kwargs.pop("timestep_idx", None)
+        kwargs.pop("pass_type", None)
+        kwargs.pop("t_idx", None)
+        kwargs.pop("block_idx", None)
         return original(*args, **kwargs)
 
     model.forward = types.MethodType(forward, model)

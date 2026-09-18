@@ -33,6 +33,14 @@ class WanS2VAdapter(Adapter):
 
     def inject(self, model: Any, router: Optional[FramePromptRouter]) -> List[Any]:
         self_mods, cross_mods = find_attention_modules(model)
+        if not self_mods:
+            for attr in ("model", "dit", "transformer", "noise_model", "s2v_model"):
+                inner = getattr(model, attr, None)
+                if inner is None or inner is model:
+                    continue
+                extra_self, extra_cross = find_attention_modules(inner)
+                self_mods.extend(extra_self)
+                cross_mods.extend(extra_cross)
         bound = [
             wrap_self_attention(module, router, extra_key_fn=framepack_keys)
             for module in self_mods

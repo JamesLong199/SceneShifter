@@ -381,7 +381,12 @@ def run_s2v_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     try:
         import wan  # type: ignore
 
-        _wrap_named_classes(wan, ["WanS2V", "WanI2V", "WanT2V"], router, "wan_s2v")
+        _wrap_named_classes(
+            wan,
+            ["WanS2V", "WanModel_S2V", "WanI2V", "WanT2V", "WanAnimate"],
+            router,
+            "wan_s2v",
+        )
     except Exception as exc:  # noqa: BLE001
         print(f"[parity-unified] wan s2v wrap skip: {exc}", flush=True)
 
