@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 
 from sceneshifter.parity.common import (  # noqa: E402
     conda_python,
+    find_videos,
     git_head,
     load_parity_config,
     repo_root,
@@ -58,11 +59,14 @@ def _reference_command(cfg: Dict[str, Any], out_dir: Path, gpu: int) -> List[str
     extra = list(ref.get("extra_args") or [])
     backbone = cfg["backbone"]
     cmd = [python, "-u", script]
+    # CUDA_VISIBLE_DEVICES already selects the physical GPU; batch workers
+    # must use the remapped ordinal 0, not the host GPU id.
+    visible_gpu = "0"
     if backbone == "hunyuan_avatar":
         cmd += [
             "--dataset-root", cfg["dataset_root"],
             "--output-root", str(out_dir),
-            "--gpus", str(gpu),
+            "--gpus", visible_gpu,
         ]
     elif backbone == "wan_fun_camera":
         cmd += ["--output", str(out_dir)]
@@ -76,7 +80,7 @@ def _reference_command(cfg: Dict[str, Any], out_dir: Path, gpu: int) -> List[str
         cmd += [
             "--dataset_root", cfg["dataset_root"],
             "--output_root", str(out_dir),
-            "--gpus", str(gpu),
+            "--gpus", visible_gpu,
         ]
     cmd += extra
     return cmd
@@ -136,7 +140,10 @@ def main() -> int:
         else git_head(str(resolve_official_root(cfg)))
     )
     write_run_args(out_dir, payload)
-    print(f"[parity] wrote {out_dir}", flush=True)
+    videos = find_videos(out_dir, cfg.get("expected_video_glob", "*.mp4"))
+    if not videos:
+        raise SystemExit(f"no mp4 written under {out_dir}")
+    print(f"[parity] wrote {videos[0]}", flush=True)
     return 0
 
 
