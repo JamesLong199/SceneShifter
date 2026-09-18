@@ -342,6 +342,37 @@ def _rerope_queries(
     return q_local.index_select(1, local_idx)
 
 
+def _ref_loc_query_for_scene_mask(
+    module: nn.Module,
+    router: FramePromptRouter,
+    block: Dict[str, Any],
+    q: torch.Tensor,
+) -> torch.Tensor:
+    """Official `_forward_with_scene_mask` scores ref-loc on locally re-roped new-scene Q.
+
+    Auto local-rerope is off for attention when a new scene can attend scene-0
+    FG/full, but official still builds `q_segment_local` and passes that tensor
+    to `get_attn_map_with_target`. Scene 0 stays on the global-RoPE Q.
+    """
+    q_ref = q
+    replaced = False
+    for segment in range(1, int(router.num_segments)):
+        try:
+            q_idx = _query_indices(router, segment, None, q.device)
+        except ValueError:
+            continue
+        if q_idx.numel() == 0:
+            continue
+        q_local = _rerope_queries(module, router, block, q, q_idx, segment)
+        if int(q_local.shape[1]) != int(q_idx.numel()):
+            continue
+        if not replaced:
+            q_ref = q.clone()
+            replaced = True
+        q_ref.index_copy_(1, q_idx, q_local.to(dtype=q_ref.dtype))
+    return q_ref
+
+
 def _transition_query_indices(
     router: FramePromptRouter, device: torch.device
 ) -> Dict[int, torch.Tensor]:
@@ -636,7 +667,15 @@ def scene_masked_official_flash(
         if isinstance(piece, tuple):
             piece = piece[0]
         out.index_copy_(1, extra_idx, piece.to(dtype=out.dtype))
-    _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
+    _collect_live_ref_attn(
+        router,
+        module,
+        _ref_loc_query_for_scene_mask(module, router, block, q),
+        k,
+        timestep_idx,
+        block_idx,
+        pass_type,
+    )
     return out
 
 

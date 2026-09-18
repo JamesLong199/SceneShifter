@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from sceneshifter.adapters.base import (
+    _ref_loc_query_for_scene_mask,
     project_router_text_embeddings,
     scene_masked_official_flash,
     wrap_audio_attention,
@@ -192,6 +193,31 @@ def test_freeze_live_mask_still_collects_scores():
         {"k_lens": torch.tensor([32])},
     )
     assert (0, 0, 0) in router._ref_loc_scores
+
+
+def test_scene_mask_ref_loc_q_uses_local_new_scene_rope():
+    """Official scores ref-loc with locally re-roped new-scene Q, even if auto rerope is off."""
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["self_attention_mask"] = [
+        [[1, "full"], [1, "fg"]],
+        [[1, "fg"], [1, "full"]],
+    ]
+    cfg["attention_control_schedule"][0]["params"]["auto_q_scale"] = False
+    router = FramePromptRouter(cfg, patch_height=2, patch_width=2)
+    q = torch.randn(1, 32, 2, 4)
+    module = _Attn()
+    module._ss_q_pre_rope = q * 3
+    module._ss_freqs = torch.ones(1)
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_rope_fn = lambda x, grid_sizes, freqs, *args, **kwargs: x
+    block = router.active_block(3, 0, "cond")
+    assert block is not None
+    q_ref = _ref_loc_query_for_scene_mask(module, router, block, q)
+    spatial = 4
+    scene0 = slice(0, 3 * spatial)
+    scene1 = slice(3 * spatial, 8 * spatial)
+    assert torch.equal(q_ref[:, scene0], q[:, scene0])
+    assert torch.equal(q_ref[:, scene1], (q * 3)[:, scene1])
 
 
 def test_talking_i2v_uncond_keeps_official_neg_context():
