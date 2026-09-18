@@ -509,23 +509,22 @@ def install_hunyuan_prompt_routing(pipeline: Any, router: FramePromptRouter, rou
         ):
             device = kwargs.get("device")
             shared = dict(kwargs)
-            shared["do_classifier_free_guidance"] = False
+            # Official encode_prompt_audio_text_base only assigns negative_* when CFG=True.
+            shared["do_classifier_free_guidance"] = True
             shared["prompt_embeds"] = None
             shared["negative_prompt_embeds"] = None
+            shared["negative_prompt"] = kwargs.get("negative_prompt") or ""
+            shared["uncond_prompt"] = kwargs.get("uncond_prompt") or shared["negative_prompt"]
             scene_embeds = []
             scene_lens = []
+            neg = neg_mask = None
             for prompt in segments:
                 shared["prompt"] = prompt
-                shared["negative_prompt"] = None
-                shared["uncond_prompt"] = None
-                embeds, _, mask, _ = orig(**shared)
+                embeds, neg, mask, neg_mask = orig(**shared)
                 embeds, mask = _pack(embeds, mask)
                 scene_embeds.append(embeds)
                 scene_lens.append(int(embeds.shape[1]))
             routed = torch.cat(scene_embeds, dim=1)
-            shared["prompt"] = kwargs.get("negative_prompt") or ""
-            shared["pixel_value_llava"] = kwargs.get("uncond_pixel_value_llava")
-            neg, _, neg_mask, _ = orig(**shared)
             neg, neg_mask = _pack(neg, neg_mask)
             target = max(int(routed.shape[1]), int(neg.shape[1]))
             routed = _pad(routed, target)

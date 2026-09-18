@@ -28,6 +28,7 @@
     "official_script": "generate.py",
     "task": "s2v-14B",
     "ckpt_dir": "/mnt/whuscs/ljz/Wan2.2-S2V-14B",
+    "size": "1024*704",
     "base_seed": 43,
     "num_clip": 1,
     "ref_loc_max_timesteps": 3,

@@ -400,6 +400,7 @@ def run_s2v_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     save.parent.mkdir(parents=True, exist_ok=True)
     argv = [
         "--task", "s2v-14B",
+        "--size", str(unified.get("size", "1024*704")),
         "--ckpt_dir", str(unified["ckpt_dir"]),
         "--image", str(image),
         "--audio", str(audio),
@@ -408,6 +409,7 @@ def run_s2v_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
         "--save_file", str(save),
         "--offload_model", "True",
         "--convert_model_dtype",
+        "--num_clip", str(unified.get("num_clip", 1)),
     ]
     _invoke_generate(gm, "generate.py", argv)
 
