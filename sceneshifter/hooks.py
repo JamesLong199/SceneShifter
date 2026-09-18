@@ -29,6 +29,9 @@ def inject_router(
     bound = impl.inject(model, router)
     if router is not None:
         model.frame_prompt_router = router
+        from .adapters.base import attach_text_projector
+
+        attach_text_projector(router, model)
         checks.validate_inject(bound, expected_min=expected_min)
     if official_root:
         checks.official_tree_is_clean(official_root)

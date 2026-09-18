@@ -151,6 +151,10 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
             _capture_null_context(pipeline, router)
         if embeds:
             router.set_text_embeddings(embeds)
+            from sceneshifter.adapters.base import attach_text_projector, project_router_text_embeddings
+
+            attach_text_projector(router, pipeline)
+            project_router_text_embeddings(router)
             print(f"[parity-unified] encoded {len(embeds)} segment prompts", flush=True)
     except Exception as exc:  # noqa: BLE001
         print(f"[parity-unified] text embed skip: {exc}", flush=True)
@@ -170,13 +174,24 @@ class _TextEncoderProxy:
             self._router.null_text_embeddings = out[1]
             if getattr(self._router, "text_embeddings", None) is None:
                 prompts = (getattr(self._router, "config", {}) or {}).get("segment_prompts") or []
+                neg = texts[1]
                 embeds = []
                 for prompt in prompts:
-                    encoded = self._inner([prompt], *args, **kwargs)
+                    encoded = self._inner([prompt, neg], *args, **kwargs)
                     embeds.append(encoded[0] if isinstance(encoded, (list, tuple)) else encoded)
                 if embeds:
                     self._router.set_text_embeddings(embeds)
-                    print(f"[parity-unified] encoded {len(embeds)} segment prompts on official T5", flush=True)
+                    from sceneshifter.adapters.base import project_router_text_embeddings
+
+                    project_router_text_embeddings(self._router)
+                    dims = [
+                        tuple(t.shape) if hasattr(t, "shape") else None
+                        for t in self._router.text_embeddings
+                    ]
+                    print(
+                        f"[parity-unified] encoded {len(embeds)} segment prompts on official T5 {dims}",
+                        flush=True,
+                    )
         return out
 
     def __getattr__(self, name: str):

@@ -125,17 +125,178 @@ def _extract_qkv(args: Tuple[Any, ...], kwargs: Dict[str, Any]):
     raise TypeError("attention kernel did not receive q/k/v")
 
 
-def _call_official_flash(orig: Callable, name: str, q, k, v, args, kwargs, used_kw: bool):
+def _projector_dims(module: nn.Module) -> Tuple[Optional[int], Optional[int]]:
+    linears = [m for m in module.modules() if isinstance(m, nn.Linear)]
+    if not linears:
+        return None, None
+    return int(linears[0].in_features), int(linears[-1].out_features)
+
+
+def attach_text_projector(router: Optional[FramePromptRouter], model: Any) -> None:
+    """Remember official ``text_embedding`` so raw T5 (4096-d) can be projected."""
+    if router is None or model is None:
+        return
+    proj = getattr(model, "text_embedding", None)
+    text_len = getattr(model, "text_len", None)
+    if proj is None:
+        inner = getattr(model, "model", None) or getattr(model, "dit", None)
+        if inner is not None:
+            proj = getattr(inner, "text_embedding", None)
+            text_len = getattr(inner, "text_len", text_len)
+    if proj is None:
+        return
+    router._text_embedding = proj
+    router._text_len = int(text_len or getattr(router, "_text_len", 512) or 512)
+    project_router_text_embeddings(router)
+
+
+def project_router_text_embeddings(router: Optional[FramePromptRouter]) -> None:
+    """Pad raw T5 tokens to ``text_len`` and run official ``text_embedding`` (4096→5120)."""
+    if router is None or not getattr(router, "text_embeddings", None):
+        return
+    projector = getattr(router, "_text_embedding", None)
+    if projector is None:
+        return
+    text_len = int(getattr(router, "_text_len", 512) or 512)
+    in_dim, out_dim = _projector_dims(projector)
+    projected: List[torch.Tensor] = []
+    changed = False
+    try:
+        proj_param = next(projector.parameters())
+        proj_device, proj_dtype = proj_param.device, proj_param.dtype
+    except StopIteration:
+        proj_device, proj_dtype = torch.device("cpu"), torch.float32
+    for emb in router.text_embeddings:
+        if not torch.is_tensor(emb):
+            projected.append(emb)
+            continue
+        core = emb[0] if emb.ndim == 3 and emb.shape[0] == 1 else emb
+        if core.ndim != 2:
+            projected.append(emb)
+            continue
+        if out_dim is not None and int(core.shape[-1]) == out_dim:
+            projected.append(emb if emb.ndim == 3 else emb.unsqueeze(0))
+            continue
+        if in_dim is not None and int(core.shape[-1]) != in_dim:
+            projected.append(emb)
+            continue
+        if core.shape[0] < text_len:
+            core = torch.cat([core, core.new_zeros(text_len - core.shape[0], core.shape[1])], dim=0)
+        else:
+            core = core[:text_len]
+        out = projector(core.unsqueeze(0).to(device=proj_device, dtype=proj_dtype))
+        projected.append(out)
+        changed = True
+    if changed:
+        router.text_embeddings = projected
+
+
+def _call_official_flash(
+    orig: Callable,
+    name: str,
+    q,
+    k,
+    v,
+    args,
+    kwargs,
+    used_kw: bool,
+    *,
+    subset: bool,
+):
     call_kwargs = dict(kwargs)
-    # Subset tensors are dense; original packed lengths no longer apply.
-    call_kwargs.pop("q_lens", None)
-    call_kwargs.pop("k_lens", None)
+    if subset:
+        # Subset tensors are dense; original packed lengths no longer apply.
+        call_kwargs.pop("q_lens", None)
+        call_kwargs.pop("k_lens", None)
     if used_kw:
         call_kwargs["q"] = q
         call_kwargs["k"] = k
         call_kwargs["v"] = v
         return orig(**call_kwargs)
     return orig(q, k, v, *args[3:], **call_kwargs)
+
+
+def _install_rope_stash(globals_dict: Dict[str, Any]) -> bool:
+    if globals_dict.get("_ss_rope_patched"):
+        return True
+    orig = globals_dict.get("rope_apply")
+    if not callable(orig):
+        return False
+
+    def wrapped(x, grid_sizes, freqs, *args, **kwargs):
+        module = _CURRENT_MODULE.get()
+        if module is not None:
+            count = int(getattr(module, "_ss_rope_n", 0))
+            if count == 0:
+                module._ss_q_pre_rope = x
+            elif count == 1:
+                module._ss_k_pre_rope = x
+            module._ss_rope_n = count + 1
+            module._ss_freqs = freqs
+            module._ss_grid_sizes = grid_sizes
+            module._ss_rope_fn = orig
+        return orig(x, grid_sizes, freqs, *args, **kwargs)
+
+    globals_dict["rope_apply"] = wrapped
+    globals_dict["_ss_rope_patched"] = True
+    return True
+
+
+def _should_local_rerope(
+    router: FramePromptRouter,
+    block: Dict[str, Any],
+    segment: int,
+    region: Optional[str],
+) -> bool:
+    """Match MultiTalk auto RoPE: local only when new-scene Q cannot attend scene-0 FG/full."""
+    if int(segment) <= 0:
+        return False
+    try:
+        row = router.attention_row(block, int(segment), region)
+    except ValueError:
+        try:
+            row = router.attention_row(block, int(segment), "fg")
+        except Exception:
+            return False
+    for key_seg, (active, key_region) in enumerate(row):
+        if active and int(key_seg) == 0 and str(key_region) in ("fg", "full"):
+            return False
+    return True
+
+
+def _rerope_queries(
+    module: nn.Module,
+    router: FramePromptRouter,
+    block: Dict[str, Any],
+    q: torch.Tensor,
+    q_idx: torch.Tensor,
+    segment: int,
+) -> torch.Tensor:
+    rope_fn = getattr(module, "_ss_rope_fn", None)
+    q_pre = getattr(module, "_ss_q_pre_rope", None)
+    freqs = getattr(module, "_ss_freqs", None)
+    grid = getattr(module, "_ss_grid_sizes", None)
+    if rope_fn is None or q_pre is None or freqs is None or grid is None:
+        return q.index_select(1, q_idx)
+    start, end = router.segment_bounds[int(segment)]
+    spatial = int(router.spatial_tokens)
+    sl = slice(start * spatial, end * spatial)
+    if q_pre.shape[1] < end * spatial:
+        return q.index_select(1, q_idx)
+    q_seg_pre = q_pre[:, sl].clone()
+    token_mask = router.qscale_token_mask(block)
+    local_mask = token_mask[sl]
+    if bool(local_mask.any()):
+        factor = float(router.qscale_factor(int(segment), block))
+        q_seg_pre[:, local_mask] = q_seg_pre[:, local_mask] * factor
+    grid_seg = grid.clone()
+    grid_seg[:, 0] = int(end - start)
+    q_local = rope_fn(q_seg_pre, grid_seg, freqs)
+    local_idx = q_idx - int(start) * spatial
+    local_idx = local_idx[(local_idx >= 0) & (local_idx < q_local.shape[1])]
+    if local_idx.numel() != q_idx.numel():
+        return q.index_select(1, q_idx)
+    return q_local.index_select(1, local_idx)
 
 
 def _transition_query_indices(
@@ -281,18 +442,24 @@ def scene_masked_official_flash(
     block_idx = getattr(module, "_ss_block_idx", 0)
     pass_type = str(getattr(module, "_ss_pass", "cond"))
     block = router.active_block(timestep_idx, block_idx, pass_type)
-    q = router.apply_q_scale(q, block)
     extra_key_fn = getattr(module, "_ss_extra_key_fn", None)
     if block is None:
-        out = _call_official_flash(orig, name, q, k, v, args, kwargs, used_kw)
+        # Keep official packed-sequence flash (k_lens=seq_lens). Do not rewrite q/k/v.
+        out = orig(*args, **kwargs)
         _maybe_update_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
         return out
 
+    q = router.apply_q_scale(q, block)
     out = q.new_zeros(q.shape)
     video_tokens = router.num_frames * router.spatial_tokens
     extra = max(0, int(q.shape[1]) - video_tokens)
 
-    def _gather(q_idx: torch.Tensor, k_idx: torch.Tensor, segment: int) -> None:
+    def _gather(
+        q_idx: torch.Tensor,
+        k_idx: torch.Tensor,
+        segment: int,
+        region: Optional[str] = None,
+    ) -> None:
         k_idx = k_idx[(k_idx >= 0) & (k_idx < k.shape[1])]
         if extra_key_fn is not None:
             extra_k = extra_key_fn(router, k, segment)
@@ -304,15 +471,20 @@ def scene_masked_official_flash(
         q_idx = q_idx[(q_idx >= 0) & (q_idx < video_tokens)]
         if q_idx.numel() == 0 or k_idx.numel() == 0:
             return
+        if _should_local_rerope(router, block, segment, region):
+            q_piece = _rerope_queries(module, router, block, q, q_idx, segment)
+        else:
+            q_piece = q.index_select(1, q_idx)
         piece = _call_official_flash(
             orig,
             name,
-            q.index_select(1, q_idx),
+            q_piece,
             k.index_select(1, k_idx),
             v.index_select(1, k_idx),
             args,
             kwargs,
             used_kw,
+            subset=True,
         )
         if isinstance(piece, tuple):
             piece = piece[0]
@@ -338,14 +510,15 @@ def scene_masked_official_flash(
                 timestep_idx=timestep_idx,
                 include_transition=False,
             )
-            _gather(q_idx, k_idx, segment)
+            _gather(q_idx, k_idx, segment, region)
     if router.should_apply_transition_context(timestep_idx):
         trans_q = _transition_query_indices(router, q.device)
         for segment, q_idx in trans_q.items():
+            trans_region = None if not isinstance(block["_mask"][segment], dict) else "fg"
             k_idx = router.noisy_key_indices(
                 block,
                 segment,
-                None if not isinstance(block["_mask"][segment], dict) else "fg",
+                trans_region,
                 q.device,
                 timestep_idx=timestep_idx,
                 include_transition=True,
@@ -360,7 +533,7 @@ def scene_masked_official_flash(
                     include_transition=True,
                 )
                 k_idx = torch.unique(torch.cat([k_idx, k_bg]), sorted=True)
-            _gather(q_idx, k_idx, segment)
+            _gather(q_idx, k_idx, segment, trans_region)
     if extra > 0:
         extra_idx = torch.arange(video_tokens, q.shape[1], device=q.device)
         piece = _call_official_flash(
@@ -372,6 +545,7 @@ def scene_masked_official_flash(
             args,
             kwargs,
             used_kw,
+            subset=True,
         )
         if isinstance(piece, tuple):
             piece = piece[0]
@@ -428,11 +602,14 @@ def wrap_self_attention(
     original = module.forward
     module.frame_prompt_router = router
     module._ss_extra_key_fn = extra_key_fn
-    patched_official = _install_flash_intercept(getattr(original, "__globals__", {}))
+    globals_dict = getattr(original, "__globals__", {})
+    patched_official = _install_flash_intercept(globals_dict)
+    _install_rope_stash(globals_dict)
 
     if patched_official:
 
         def forward(self, *args, **kwargs):
+            self._ss_rope_n = 0
             _stash_grid_sizes(self, args, kwargs)
             token = _CURRENT_MODULE.set(self)
             try:
@@ -500,6 +677,7 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
             if context is None:
                 return original(x, *args, **kwargs)
             return original(x, context, *args, **kwargs)
+        project_router_text_embeddings(active_router)
         if not active_router.should_use_segment_prompts(int(timestep_idx), str(pass_type)):
             return original(x, context, *args, **kwargs)
         outs = []
