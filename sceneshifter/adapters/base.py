@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 
 from ..attention import gather_attention, scaled_dot_product
-from ..ref_attn import get_attn_map_with_target_per_head
+from ..ref_attn import get_attn_map_with_target
 from ..router import FramePromptRouter
 
 _CURRENT_MODULE: contextvars.ContextVar[Optional[nn.Module]] = contextvars.ContextVar(
@@ -432,38 +432,24 @@ def _collect_live_ref_attn(
         shape = (int(row[0]), int(row[1]), int(row[2]))
     else:
         shape = (int(router.num_frames), int(router.patch_height), int(router.patch_width))
-    head_mask = torch.zeros(int(q.shape[2]), device=q.device, dtype=q.dtype)
-    for head in wanted_heads:
-        if 0 <= int(head) < int(q.shape[2]):
-            head_mask[int(head)] = 1
-    per_head = get_attn_map_with_target_per_head(
-        q[:, :video],
-        k,
-        shape,
-        targets,
-        head_mask=head_mask,
-    )
-    if per_head is None:
-        return
     num_subjects = int(targets.shape[0] - 1)
-    # per_head: [C, seq, heads]
-    seq = int(per_head.shape[1])
-    if seq != video or video % spatial != 0:
-        return
-    fg_maps = per_head[:num_subjects].reshape(num_subjects, router.num_frames, spatial, -1)
-    bg_map = per_head[num_subjects].reshape(router.num_frames, spatial, -1)
+    # One head at a time: a full 40-head map is ~7GB and OOMs next to the 14B DiT.
     for head in wanted_heads:
-        if head < 0 or head >= int(fg_maps.shape[-1]):
+        if head < 0 or head >= int(q.shape[2]):
             continue
-        if torch.isnan(fg_maps[0, :, :, head]).all():
-            continue
-        router.store_ref_loc_head(
-            timestep_idx,
-            int(block_idx),
-            int(head),
-            fg_maps[:, :, :, head],
-            bg_map[:, :, head],
+        scores = get_attn_map_with_target(
+            q[:, :video, head : head + 1],
+            k[:, :, head : head + 1],
+            shape,
+            targets,
         )
+        if scores is None:
+            continue
+        if int(scores.shape[1]) != video or video % spatial != 0:
+            continue
+        fg = scores[:num_subjects].reshape(num_subjects, router.num_frames, spatial)
+        bg = scores[num_subjects].reshape(router.num_frames, spatial)
+        router.store_ref_loc_head(timestep_idx, int(block_idx), int(head), fg, bg)
 
 
 def _query_indices(
