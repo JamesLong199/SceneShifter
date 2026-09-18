@@ -347,6 +347,9 @@ def _rerope_queries(
     grid = getattr(module, "_ss_grid_sizes", None)
     if rope_fn is None or q_pre is None or freqs is None or grid is None:
         return q.index_select(1, q_idx)
+    if not torch.is_tensor(grid):
+        # Wan S2V stores grid_sizes as a Python list.
+        return q.index_select(1, q_idx)
     start, end = router.segment_bounds[int(segment)]
     spatial = int(router.spatial_tokens)
     sl = slice(start * spatial, end * spatial)

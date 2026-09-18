@@ -4,6 +4,7 @@ import torch.nn as nn
 from sceneshifter.adapters.base import (
     _grid_fhw,
     _ref_loc_query_for_scene_mask,
+    _rerope_queries,
     project_router_text_embeddings,
     scene_masked_official_flash,
     wrap_audio_attention,
@@ -15,6 +16,19 @@ from tests.conftest import canonical_config
 
 class _Attn(nn.Module):
     pass
+
+
+def test_rerope_queries_skips_list_grid_sizes():
+    router = FramePromptRouter(canonical_config(), patch_height=2, patch_width=2)
+    module = _Attn()
+    module._ss_rope_fn = lambda *args, **kwargs: args[0]
+    module._ss_q_pre_rope = torch.randn(1, 32, 2, 2)
+    module._ss_freqs = torch.randn(2)
+    module._ss_grid_sizes = [[8, 2, 2]]
+    q = torch.randn(1, 32, 2, 2)
+    q_idx = torch.arange(4)
+    out = _rerope_queries(module, router, {"_mask": []}, q, q_idx, 0)
+    assert out.shape[1] == 4
 
 
 def test_grid_fhw_flattens_s2v_nonscalar_row():
