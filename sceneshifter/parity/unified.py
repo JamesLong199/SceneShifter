@@ -389,6 +389,42 @@ def _capture_null_context(pipeline: Any, router: Any) -> None:
         encoder._ss_null_captured = True
 
 
+def _offload_dit_before_vae(pipeline: Any) -> None:
+    """Official Animate/S2V leave the 14B DiT on GPU through VAE decode.
+
+    After SceneShifter routing, an 80GB A800 can OOM on ``vae.decode``
+    (~1.9 GiB) while 76 GiB is still held by the transformer. Move DiT
+    weights to CPU and empty the cache immediately before decode.
+    Official kernels stay; decoded pixels are unchanged.
+    """
+    vae = getattr(pipeline, "vae", None)
+    if vae is None or not hasattr(vae, "decode") or getattr(vae, "_ss_decode_offload", False):
+        return
+
+    original = vae.decode
+
+    def decode(*args, **kwargs):
+        import torch
+
+        for attr in ("noise_model", "model", "dit", "transformer"):
+            module = getattr(pipeline, attr, None)
+            if module is None or not hasattr(module, "cpu"):
+                continue
+            try:
+                module.cpu()
+                print(f"[parity-unified] offloaded {attr} before VAE decode", flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[parity-unified] {attr} cpu skip: {exc}", flush=True)
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        return original(*args, **kwargs)
+
+    vae.decode = decode
+    vae._ss_decode_offload = True
+
+
 def _wrap_named_classes(mod: Any, names: List[str], router: Any, adapter: str) -> None:
     for name in names:
         cls = getattr(mod, name, None)
@@ -411,6 +447,7 @@ def _wrap_named_classes(mod: Any, names: List[str], router: Any, adapter: str) -
                     _maybe_gate_talking_audio_cfg(target, router, adapter)
                     _maybe_set_text_embeddings(router, self, getattr(router, "config", {}))
                     _capture_null_context(self, router)
+                    _offload_dit_before_vae(self)
                 except Exception as exc:  # noqa: BLE001
                     print(
                         f"[parity-unified] inject after {class_name}.__init__ failed: {exc}",
@@ -434,6 +471,7 @@ def _wrap_create_pipeline(mod: Any, router: Any, adapter: str, routing: Dict[str
         _maybe_gate_talking_audio_cfg(pipe, router, adapter)
         _maybe_set_text_embeddings(router, pipe, routing)
         _capture_null_context(pipe, router)
+        _offload_dit_before_vae(pipe)
         return pipe
 
     mod.create_pipeline = wrapped

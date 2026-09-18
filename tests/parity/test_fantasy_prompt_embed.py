@@ -318,6 +318,34 @@ def test_fun_clip_image_uses_uncropped_cond():
     assert 'meta.get("prompt")' in src
 
 
+def test_offload_dit_before_vae_moves_noise_model():
+    from sceneshifter.parity.unified import _offload_dit_before_vae
+
+    class Dummy(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.moved = False
+
+        def cpu(self):
+            self.moved = True
+            return self
+
+    class Vae:
+        def decode(self, x):
+            return ("decoded", x)
+
+    class Pipe:
+        noise_model = Dummy()
+        vae = Vae()
+
+    pipe = Pipe()
+    _offload_dit_before_vae(pipe)
+    assert pipe.vae.decode("latents") == ("decoded", "latents")
+    assert pipe.noise_model.moved is True
+    _offload_dit_before_vae(pipe)
+    assert pipe.vae._ss_decode_offload is True
+
+
 def test_inject_finds_wan_animate_noise_model():
     class Wrapper:
         def __init__(self):
