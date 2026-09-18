@@ -582,6 +582,7 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
         "--image-size", "704",
         "--cfg-scale", str(unified.get("cfg_scale", 7.5)),
         "--infer-steps", str(unified.get("infer_steps", 50)),
+        "--flow-shift-eval-video", str(unified.get("flow_shift", 5.0)),
         "--use-deepcache", "1",
         "--save-path", str(save_dir),
         "--use-fp8",

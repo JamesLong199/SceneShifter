@@ -86,9 +86,30 @@ def _maybe_update_spatial(router: FramePromptRouter, module: nn.Module, q: torch
         gh, gw = int(row[1]), int(row[2])
         spatial = gh * gw
         if spatial > 0 and spatial != router.spatial_tokens:
+            old = int(router.spatial_tokens)
             router.patch_height = gh
             router.patch_width = gw
             router.spatial_tokens = spatial
+            for attr in ("static_bg", "live_bg"):
+                mask = getattr(router, attr, None)
+                if mask is None or mask.numel() == 0 or mask.shape[-1] != old:
+                    continue
+                frames = int(mask.shape[0])
+                src = mask.reshape(frames, 1, old).float()
+                resized = torch.nn.functional.interpolate(src, size=spatial, mode="nearest")
+                setattr(router, attr, resized.reshape(frames, spatial) > 0.5)
+            subjects = getattr(router, "subject_fg_masks", None)
+            if subjects is not None and subjects.numel() and subjects.shape[-1] == old:
+                n_subj, frames = int(subjects.shape[0]), int(subjects.shape[1])
+                src = subjects.reshape(n_subj * frames, 1, old).float()
+                resized = torch.nn.functional.interpolate(src, size=spatial, mode="nearest")
+                router.subject_fg_masks = resized.reshape(n_subj, frames, spatial) > 0.5
+            live_fg = getattr(router, "live_subject_fg", None)
+            if live_fg is not None and live_fg.numel() and live_fg.shape[-1] == old:
+                n_subj, frames = int(live_fg.shape[0]), int(live_fg.shape[1])
+                src = live_fg.reshape(n_subj * frames, 1, old).float()
+                resized = torch.nn.functional.interpolate(src, size=spatial, mode="nearest")
+                router.live_subject_fg = resized.reshape(n_subj, frames, spatial) > 0.5
     except Exception:
         if q.ndim >= 2 and router.num_frames > 0:
             guessed = int(q.shape[1]) // int(router.num_frames)

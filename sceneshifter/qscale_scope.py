@@ -42,8 +42,19 @@ def new_scene_scale_token_mask(
         if background_by_frame is None:
             mask[token_start:token_end] = True
             continue
-        frame_bg = background_by_frame[int(start):int(end)].reshape(-1)
-        mask[token_start:token_end] = frame_bg.to(device=device, dtype=torch.bool)
+        frame_bg = background_by_frame[int(start):int(end)]
+        n_frames = int(end) - int(start)
+        expected = n_frames * int(spatial_tokens)
+        flat = frame_bg.reshape(-1)
+        if flat.numel() != expected and n_frames > 0:
+            old_spatial = flat.numel() // n_frames
+            if old_spatial > 0 and old_spatial * n_frames == flat.numel():
+                src = flat.reshape(n_frames, 1, old_spatial).float()
+                flat = torch.nn.functional.interpolate(src, size=int(spatial_tokens), mode="nearest").reshape(-1)
+            else:
+                mask[token_start:token_end] = True
+                continue
+        mask[token_start:token_end] = flat.to(device=device, dtype=torch.bool)
     return mask
 
 

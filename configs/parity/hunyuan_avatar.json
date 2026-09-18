@@ -31,6 +31,7 @@
     "ckpt": "/mnt/whuscs/ljz/HunyuanVideo-Avatar/weights/ckpts/hunyuan-video-t2v-720p/transformers/mp_rank_00_model_states_fp8.pt",
     "base_seed": 43,
     "infer_steps": 50,
+    "flow_shift": 5.0,
     "cfg_scale": 7.5,
     "audio_start_timestep": 0,
     "len_trans": 2,
