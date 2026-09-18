@@ -222,6 +222,15 @@ def test_fantasy_audio_cfg_gate_reuses_posi_before_start():
     assert not torch.equal(third, first)
 
 
+def test_allow_missing_flex_attention_is_safe():
+    from sceneshifter.parity.unified import _allow_missing_flex_attention
+
+    _allow_missing_flex_attention()
+    import torch.nn.attention.flex_attention as flex
+
+    assert hasattr(flex, "BlockMask")
+
+
 def test_inject_finds_wan_animate_noise_model():
     class Wrapper:
         def __init__(self):

@@ -764,6 +764,22 @@ def run_animate_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     _invoke_generate(gm, "generate.py", argv)
 
 
+def _allow_missing_flex_attention() -> None:
+    """Official-main videox-fun imports lingbot/self-forcing at package import."""
+    try:
+        from torch.nn.attention.flex_attention import BlockMask  # noqa: F401
+        return
+    except Exception:
+        pass
+    import sys
+    import types
+
+    flex = types.ModuleType("torch.nn.attention.flex_attention")
+    flex.BlockMask = type("BlockMask", (), {})
+    flex.create_block_mask = lambda *args, **kwargs: None
+    sys.modules["torch.nn.attention.flex_attention"] = flex
+
+
 def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None:
     import torch
     from diffusers import FlowMatchEulerDiscreteScheduler
@@ -777,13 +793,14 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     root = Path(cfg["dataset_root"])
     _push_path(official)
     os.chdir(official)
-    from videox_fun.models import (  # type: ignore
-        AutoencoderKLWan,
-        CLIPModel,
-        WanT5EncoderModel,
-        WanTransformer3DModel,
-    )
-    from videox_fun.pipeline import WanFunControlPipeline  # type: ignore
+    _allow_missing_flex_attention()
+    # Import submodules directly. Official-main videox_fun.models.__init__
+    # pulls lingbot/self-forcing which need torch.nn.attention.flex_attention.
+    from videox_fun.models.wan_image_encoder import CLIPModel  # type: ignore
+    from videox_fun.models.wan_text_encoder import WanT5EncoderModel  # type: ignore
+    from videox_fun.models.wan_transformer3d import WanTransformer3DModel  # type: ignore
+    from videox_fun.models.wan_vae import AutoencoderKLWan  # type: ignore
+    from videox_fun.pipeline.pipeline_wan_fun_control import WanFunControlPipeline  # type: ignore
     from videox_fun.data.dataset_image_video import process_pose_file  # type: ignore
     from videox_fun.utils.utils import get_image_latent, save_videos_grid  # type: ignore
 
