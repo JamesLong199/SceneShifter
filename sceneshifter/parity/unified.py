@@ -30,7 +30,11 @@ def _load_routing(cfg: Dict[str, Any]) -> Dict[str, Any]:
     from sceneshifter.config import load_frame_prompt_config
 
     meta_path = resolve_metadata(cfg)
-    asset_root = Path(cfg.get("dataset_root") or meta_path.parent)
+    # Animate parity metadata lives under configs/ and stores masks next to it.
+    if str(cfg.get("metadata") or "").startswith("configs/"):
+        asset_root = meta_path.parent
+    else:
+        asset_root = Path(cfg.get("dataset_root") or meta_path.parent)
     routing = load_frame_prompt_config(
         str(meta_path),
         backend=cfg["backbone"],

@@ -13,12 +13,20 @@ mkdir -p "$LOG" "$OUT/_assets/wan_animate_012"
 
 prepare_animate_assets() {
   local dest="$OUT/_assets/wan_animate_012"
+  local demo="/tmp/wan_animate_mask_demo_self/exp_012"
   cp -f "$SS/configs/parity/assets/wan_animate_012_frame_prompt.json" "$dest/012_frame_prompt.json"
-  if [[ -d /tmp/wan_animate_mask_demo_self/exp_012/process ]]; then
-    rsync -a /tmp/wan_animate_mask_demo_self/exp_012/process/ "$dest/process/"
+  mkdir -p "$dest/masks" "$dest/process"
+  if [[ -d "$demo/process" ]]; then
+    rsync -a "$demo/process/" "$dest/process/"
   elif [[ ! -d "$dest/process" ]]; then
-    echo "[launch] missing Animate 012 process assets at /tmp/wan_animate_mask_demo_self/exp_012/process" >&2
+    echo "[launch] missing Animate 012 process assets at $demo/process" >&2
     return 1
+  fi
+  if [[ -d "$demo/masks" ]]; then
+    rsync -a "$demo/masks/" "$dest/masks/"
+  elif [[ -f /data/home/jzlong/data/SceneShifter_dataset/background_masks/012_standing_2_3_0_bg_mask.npy ]]; then
+    cp -f /data/home/jzlong/data/SceneShifter_dataset/background_masks/012_standing_2_3_0_bg_mask.npy \
+      "$dest/masks/012_standing_2_3_0_bg_mask.npy"
   fi
 }
 
