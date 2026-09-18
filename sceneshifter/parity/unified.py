@@ -173,16 +173,24 @@ def _is_text_embed(value: Any) -> bool:
     return hasattr(value, "shape") and hasattr(value, "dtype")
 
 
-def _commit_text_embeddings(router: Any, pipeline: Any, embeds: List[Any], *, source: str) -> None:
+def _commit_text_embeddings(
+    router: Any,
+    pipeline: Any,
+    embeds: List[Any],
+    *,
+    source: str,
+    project: bool = True,
+) -> None:
     usable = [_unwrap_prompt_embed(item) for item in embeds]
     if not usable or not all(_is_text_embed(item) for item in usable):
         print(f"[parity-unified] skip non-tensor segment embeds from {source}", flush=True)
         return
     router.set_text_embeddings(usable)
-    from sceneshifter.adapters.base import attach_text_projector, project_router_text_embeddings
+    if project:
+        from sceneshifter.adapters.base import attach_text_projector, project_router_text_embeddings
 
-    attach_text_projector(router, pipeline)
-    project_router_text_embeddings(router)
+        attach_text_projector(router, pipeline)
+        project_router_text_embeddings(router)
     dims = [tuple(item.shape) if hasattr(item, "shape") else None for item in router.text_embeddings]
     print(f"[parity-unified] encoded {len(usable)} segment prompts via {source} {dims}", flush=True)
 
@@ -205,7 +213,10 @@ def _install_encode_prompt_hook(pipeline: Any, router: Any, routing: Dict[str, A
                 state["busy"] = True
                 try:
                     embeds = [original(seg, positive=True) for seg in prompts]
-                    _commit_text_embeddings(router, pipeline, embeds, source="encode_prompt hook")
+                    # Keep raw T5 (4096). Official DiT projects after it onloads.
+                    _commit_text_embeddings(
+                        router, pipeline, embeds, source="encode_prompt hook", project=False
+                    )
                     try:
                         import torch
 
@@ -520,6 +531,55 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     _invoke_generate(gm, script, argv)
 
 
+def _install_fantasy_audio_cfg_gate(dit: Any, audio_start: int) -> None:
+    """Official-main always runs 3-pass audio CFG; exp uses 2-pass before audio_start.
+
+    Reuse the cond prediction for the no-audio call so ``audio_cfg*(posi-noaudio)``
+    is exactly 0 and thread_timestep only sees cond + uncond, matching exp.
+    """
+    import types
+
+    import torch
+
+    if dit is None or getattr(dit, "_ss_fantasy_audio_cfg_gated", False):
+        return
+    original = dit.forward
+    state = {"t": object(), "step": -1, "calls": 0, "posi": None}
+
+    def forward(self, *args, **kwargs):
+        t = kwargs.get("timestep", kwargs.get("t"))
+        if torch.is_tensor(t):
+            key = float(t.reshape(-1)[0].detach().float().cpu())
+        else:
+            try:
+                key = float(t)
+            except (TypeError, ValueError):
+                key = t
+        if key != state["t"]:
+            state["t"] = key
+            state["step"] += 1
+            state["calls"] = 0
+            state["posi"] = None
+        state["calls"] += 1
+        if (
+            int(state["step"]) < int(audio_start)
+            and state["calls"] == 2
+            and state["posi"] is not None
+        ):
+            return state["posi"]
+        out = original(*args, **kwargs)
+        if state["calls"] == 1:
+            state["posi"] = out
+        return out
+
+    dit.forward = types.MethodType(forward, dit)
+    dit._ss_fantasy_audio_cfg_gated = True
+    print(
+        f"[parity-unified] fantasy audio CFG gated: 2-pass until step {int(audio_start)}",
+        flush=True,
+    )
+
+
 def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None:
     import librosa
     import torch
@@ -578,6 +638,10 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
         flush=True,
     )
     _inject(pipe.dit, router, "fantasytalking")
+    from sceneshifter.adapters.base import attach_text_projector
+
+    attach_text_projector(router, pipe.dit)
+    _install_fantasy_audio_cfg_gate(pipe.dit, int(unified.get("audio_start_timestep", 15)))
     # Encode segments later, when official __call__ has only T5 onloaded.
     _install_encode_prompt_hook(pipe, router, routing)
     try:

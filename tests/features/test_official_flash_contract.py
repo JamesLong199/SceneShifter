@@ -155,6 +155,45 @@ def test_unrestricted_collects_ref_loc_without_updating_mask():
     assert (0, 0, 0) in router._ref_loc_scores
 
 
+def test_freeze_live_mask_still_collects_scores():
+    cfg = canonical_config()
+    cfg["freeze_live_mask"] = True
+    cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[0, 0]],
+        "ref_attn_mask_drop_low_percent": 0.0,
+        "ref_attn_mask_min_component_size": 1,
+        "ref_attn_mask_hole_size": 0,
+    }
+    cfg["background_mask_path"] = None
+    router = FramePromptRouter(cfg, backend="fantasytalking", patch_height=2, patch_width=2)
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    router.ref_loc_max_timesteps = 9
+
+    def fake_flash(*args, **kwargs):
+        return args[0]
+
+    q = torch.randn(1, 32, 2, 4)
+    module = _Attn()
+    module.frame_prompt_router = router
+    module._ss_timestep = 0
+    module._ss_block_idx = 0
+    module._ss_pass = "cond"
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    scene_masked_official_flash(
+        fake_flash,
+        "flash_attention",
+        module,
+        router,
+        (q, q.clone(), q.clone()),
+        {"k_lens": torch.tensor([32])},
+    )
+    assert (0, 0, 0) in router._ref_loc_scores
+
+
 def test_talking_i2v_drops_context_lens_and_uses_shared_embed_on_uncond():
     cfg = canonical_config()
     cfg["segment_prompt_start_timestep"] = 3

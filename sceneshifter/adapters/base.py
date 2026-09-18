@@ -405,8 +405,18 @@ def _collect_live_ref_attn(
     block_idx: Any,
     pass_type: str,
 ) -> None:
-    """Store official get_attn_map scores. Do not apply a live mask here."""
-    if pass_type == "uncond" or bool(getattr(router, "freeze_live_mask", False)):
+    """Store official get_attn_map scores. Do not apply a live mask here.
+
+    ``freeze_live_mask`` freezes the *applied* mask inside a timestep. Scores
+    must still be collected so the next step can rebuild from the previous
+    step (Fantasy official ``update_ref_attn_mask_after_timestep``).
+    """
+    if pass_type == "uncond":
+        return
+    if (
+        bool(getattr(router, "freeze_live_mask", False))
+        and getattr(router, "backend", None) != "fantasytalking"
+    ):
         return
     max_t = int(getattr(router, "ref_loc_max_timesteps", 0) or 0)
     if max_t > 0 and int(timestep_idx) >= max_t:
@@ -491,7 +501,16 @@ def scene_masked_official_flash(
         # Collect vanilla scores so scheduled steps can build the live mask.
         _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
         return out
-    router.refresh_live_mask_from_stored(timestep_idx, block)
+    refresh_idx = int(timestep_idx)
+    if (
+        bool(getattr(router, "freeze_live_mask", False))
+        and getattr(router, "backend", None) == "fantasytalking"
+        and refresh_idx > 0
+    ):
+        # Official Fantasy freezes one selector mask for all passes of step t
+        # from scores collected at t-1, then rebuilds after the step.
+        refresh_idx -= 1
+    router.refresh_live_mask_from_stored(refresh_idx, block)
 
     q = router.apply_q_scale(q, block)
     out = q.new_zeros(q.shape)
@@ -819,10 +838,12 @@ def thread_timestep(model: Any) -> None:
         timestep_idx = kwargs.get("timestep_idx", kwargs.get("t_idx"))
         pass_type = kwargs.get("pass_type")
         t_key = _t_key(args, kwargs)
+        stepped = False
         if timestep_idx is None:
             if t_key is not None and t_key != state["last_t"]:
                 if state["last_t"] is not unseen:
                     state["t_idx"] += 1
+                    stepped = True
                 state["last_t"] = t_key
                 state["pass"] = 0
             else:
@@ -847,6 +868,14 @@ def thread_timestep(model: Any) -> None:
             # Official MultiTalk/InfiniteTalk run cond first, then drop-audio / uncond.
             pass_type = "cond" if state["pass"] == 0 else "uncond"
         if router is not None:
+            if (
+                stepped
+                and bool(getattr(router, "freeze_live_mask", False))
+                and getattr(router, "backend", None) == "fantasytalking"
+            ):
+                # Allow the next step to rebuild from the previous step's scores.
+                router.live_bg = None
+                router.live_subject_fg = None
             router._ss_timestep = timestep_idx
             router._ss_pass = pass_type
             start = int(getattr(router, "audio_start_timestep", 0) or 0)

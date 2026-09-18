@@ -2,7 +2,12 @@ import torch
 import torch.nn as nn
 
 from sceneshifter.adapters.base import thread_timestep
-from sceneshifter.parity.unified import _inject, _install_encode_prompt_hook, _unwrap_prompt_embed
+from sceneshifter.parity.unified import (
+    _inject,
+    _install_encode_prompt_hook,
+    _install_fantasy_audio_cfg_gate,
+    _unwrap_prompt_embed,
+)
 from sceneshifter.router import FramePromptRouter
 from tests.conftest import TinyDiT, canonical_config
 
@@ -174,6 +179,47 @@ def test_fantasy_cross_attn_keeps_full_sequence_for_audio():
     model.self_attn = nn.Identity()
     bound = FantasyTalkingAdapter().inject(model, router)
     assert any(getattr(m, "_ss_fantasy_cross_wrapped", False) for m in bound)
+
+
+def test_encode_prompt_hook_keeps_raw_t5():
+    cfg = canonical_config()
+    router = FramePromptRouter(cfg, backend="fantasytalking", patch_height=2, patch_width=2)
+    raw = {"a": torch.randn(5, 8), "b": torch.randn(3, 8)}
+
+    class Pipe(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.text_embedding = nn.Sequential(nn.Linear(8, 16, bias=False))
+            self.text_len = 4
+
+        def encode_prompt(self, prompt, positive=True):
+            return {"context": raw[prompt]}
+
+    pipe = Pipe()
+    _install_encode_prompt_hook(pipe, router, {"segment_prompts": ["a", "b"]})
+    pipe.encode_prompt("a", positive=True)
+    assert router.text_embeddings[0].shape == (5, 8)
+    assert router.text_embeddings[1].shape == (3, 8)
+
+
+def test_fantasy_audio_cfg_gate_reuses_posi_before_start():
+    class Dummy(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.n = 0
+
+        def forward(self, x, timestep=0.0, **kwargs):
+            self.n += 1
+            return x + self.n
+
+    model = Dummy()
+    _install_fantasy_audio_cfg_gate(model, audio_start=2)
+    first = model(torch.zeros(1), timestep=9.0)
+    second = model(torch.ones(1), timestep=9.0)
+    third = model(torch.zeros(1), timestep=8.0)
+    assert torch.equal(first, second)
+    assert model.n == 2
+    assert not torch.equal(third, first)
 
 
 def test_inject_finds_wan_animate_noise_model():
