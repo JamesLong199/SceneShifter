@@ -325,7 +325,7 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     fps = 23
     num_frames = min(int(fps * duration // 4) * 4 + 5, 81)
     audio_wav2vec_fea = get_audio_features(wav2vec, wav2vec_processor, audio_path, fps, num_frames)
-    image = resize_image_by_longest_edge(image_path, None)
+    image = resize_image_by_longest_edge(image_path, int(unified.get("image_size", 768)))
     width, height = image.size
     audio_proj_fea = fantasytalking.get_proj_fea(audio_wav2vec_fea)
     pos_idx_ranges = fantasytalking.split_audio_sequence(audio_proj_fea.size(1), num_frames=num_frames)
