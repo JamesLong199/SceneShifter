@@ -435,7 +435,12 @@ def _collect_live_ref_attn(
     video = int(router.num_frames) * spatial
     if q.shape[1] < video or k.shape[1] < spatial:
         return
-    targets = _ref_target_masks(router, spatial, q.device, q.dtype)
+    # Official get_attn_map_with_target runs q/k as v.dtype (usually bf16).
+    v = getattr(module, "_ss_v_for_ref", None)
+    score_dtype = v.dtype if torch.is_tensor(v) else q.dtype
+    q_score = q.to(dtype=score_dtype)
+    k_score = k.to(dtype=score_dtype)
+    targets = _ref_target_masks(router, spatial, q.device, score_dtype)
     if targets is None:
         return
     grid = getattr(module, "_ss_grid_sizes", None)
@@ -450,8 +455,8 @@ def _collect_live_ref_attn(
         if head < 0 or head >= int(q.shape[2]):
             continue
         scores = get_attn_map_with_target(
-            q[:, :video, head : head + 1],
-            k[:, :, head : head + 1],
+            q_score[:, :video, head : head + 1],
+            k_score[:, :, head : head + 1],
             shape,
             targets,
         )
@@ -491,6 +496,7 @@ def scene_masked_official_flash(
     kwargs: Dict[str, Any],
 ) -> Any:
     q, k, v, used_kw = _extract_qkv(args, kwargs)
+    module._ss_v_for_ref = v
     _maybe_update_spatial(router, module, q)
     timestep_idx = int(getattr(module, "_ss_timestep", 0) or 0)
     block_idx = getattr(module, "_ss_block_idx", 0)
@@ -515,7 +521,8 @@ def scene_masked_official_flash(
     router.refresh_live_mask_from_stored(refresh_idx, block)
 
     q = router.apply_q_scale(q, block)
-    out = q.new_zeros(q.shape)
+    # Official _forward_with_scene_mask accumulates in v.dtype (bf16), not fp32 Q.
+    out = q.new_zeros(q.shape, dtype=v.dtype)
     video_tokens = router.num_frames * router.spatial_tokens
     extra = max(0, int(q.shape[1]) - video_tokens)
 
@@ -559,7 +566,21 @@ def scene_masked_official_flash(
         row = block["_mask"][segment]
         regions: List[Optional[str]]
         if isinstance(row, dict):
-            regions = ["fg", "bg"]
+            # Official disables fg/bg Q-split when either index set is empty.
+            try:
+                fg_q = _query_indices(router, segment, "fg", q.device)
+                bg_q = _query_indices(router, segment, "bg", q.device)
+            except ValueError:
+                fg_q = bg_q = None
+            if (
+                fg_q is None
+                or bg_q is None
+                or int(fg_q.numel()) == 0
+                or int(bg_q.numel()) == 0
+            ):
+                regions = [None]
+            else:
+                regions = ["fg", "bg"]
         else:
             regions = [None]
         for region in regions:
@@ -781,21 +802,16 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
             return original(x, context, *args, **kwargs)
         project_router_text_embeddings(active_router)
         talking = getattr(active_router, "backend", "") in {"multitalk", "infinitetalk"}
-        # Official MultiTalk/InfiniteTalk route text on timestep only (both CFG passes)
-        # and never pack T5 with generate's context_lens.
-        text_pass = "cond" if talking else str(pass_type)
+        # Official MultiTalk disables cross-attn routing on uncond (neg prompt stays).
+        # Official-main also sets context_lens=None before flash.
         if talking:
             args, kwargs = _drop_packed_context_lens(args, kwargs)
-        if not active_router.should_use_segment_prompts(int(timestep_idx), text_pass):
-            if talking and active_router.text_embeddings:
-                shared = _clip_plus_text(context, active_router.text_embeddings[0])
-                if shared is not None:
-                    context = shared
+        if not active_router.should_use_segment_prompts(int(timestep_idx), str(pass_type)):
             return original(x, context, *args, **kwargs)
         outs = []
         for segment in range(active_router.num_segments):
             start, end = active_router.segment_bounds[segment]
-            embed_idx = active_router.selected_text_index(int(timestep_idx), segment, text_pass)
+            embed_idx = active_router.selected_text_index(int(timestep_idx), segment, str(pass_type))
             if embed_idx is None:
                 return original(x, context, *args, **kwargs)
             text = active_router.text_embeddings[embed_idx]
