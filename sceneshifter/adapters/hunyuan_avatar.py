@@ -261,6 +261,10 @@ def _maybe_update_live_mask(
     if router.subject_fg_masks is None:
         return
     subject = router.subject_fg_masks[:, 0].to(device=q_row.device, dtype=torch.float32)
+    if subject.shape[-1] != ref_k.shape[1]:
+        subject = torch.nn.functional.interpolate(
+            subject.unsqueeze(1), size=int(ref_k.shape[1]), mode="nearest"
+        ).squeeze(1)
     background = (~subject.any(0)).float().unsqueeze(0)
     targets = torch.cat([subject, background], dim=0)
     head = params.get("ref_attn_mask_head")
