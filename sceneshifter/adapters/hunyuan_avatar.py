@@ -41,6 +41,51 @@ def _resize_frame_mask(mask: torch.Tensor, frames: int, spatial: int) -> torch.T
     return torch.nn.functional.interpolate(src, size=spatial, mode="nearest").reshape(frames, spatial) > 0.5
 
 
+def _resize_center_crop_mask(mask: torch.Tensor, target_hw: tuple[int, int]) -> torch.Tensor:
+    """Official Hunyuan ``_resize_center_crop_mask``: cover-resize + center crop."""
+    target_h, target_w = int(target_hw[0]), int(target_hw[1])
+    if mask.ndim != 2:
+        raise ValueError(f"expected 2D mask, got {tuple(mask.shape)}")
+    height, width = int(mask.shape[0]), int(mask.shape[1])
+    scale = max(target_h / max(height, 1), target_w / max(width, 1))
+    resized_h = max(round(height * scale), target_h)
+    resized_w = max(round(width * scale), target_w)
+    resized = torch.nn.functional.interpolate(
+        mask[None, None].float(), size=(resized_h, resized_w), mode="nearest"
+    )[0, 0]
+    top = (resized_h - target_h) // 2
+    left = (resized_w - target_w) // 2
+    return resized[top : top + target_h, left : left + target_w]
+
+
+def apply_hunyuan_official_masks(router: FramePromptRouter) -> None:
+    """Reload subject FG with official cover-crop so ref/video tokens match exp."""
+    raw = getattr(router, "raw_subject_fg", None)
+    if raw is None:
+        return
+    patch_h, patch_w = int(router.patch_height), int(router.patch_width)
+    if patch_h <= 0 or patch_w <= 0:
+        return
+    subjects = []
+    union = None
+    for subject in range(int(raw.shape[0])):
+        fg = raw[subject, 0].float()
+        subjects.append((_resize_center_crop_mask(fg, (patch_h, patch_w)) > 0.5).flatten())
+        union = fg if union is None else torch.maximum(union, fg)
+    union_lat = (_resize_center_crop_mask(union, (patch_h, patch_w)) > 0.5).flatten()
+    stacked = torch.stack(subjects, dim=0)
+    frames = int(router.num_frames)
+    router.subject_fg_masks = stacked[:, None].expand(-1, frames, -1).contiguous()
+    router.static_bg = (~union_lat)[None].expand(frames, -1).contiguous()
+    router.live_bg = None
+    router.live_subject_fg = None
+    print(
+        f"[hunyuan-adapter] official cover-crop masks subjects={tuple(stacked.shape)} "
+        f"latent={patch_h}x{patch_w} union_fg={int(union_lat.sum())}",
+        flush=True,
+    )
+
+
 def _fg_maps(router: FramePromptRouter, device: torch.device, frames: int, spatial: int):
     live = router.live_subject_fg
     if live is not None:
@@ -286,9 +331,16 @@ def _maybe_update_live_mask(
     else:
         live = stacked[:, 0].float()
     num_subjects = int(router.subject_fg_masks.shape[0])
-    fg = live[:num_subjects].mean(0).view(router.num_frames, router.spatial_tokens)
-    router.update_live_mask_from_scores(
-        fg,
+    if int(live.shape[0]) < num_subjects + 1:
+        return
+    spatial = int(router.spatial_tokens)
+    frames = int(router.num_frames)
+    if int(live.shape[-1]) != frames * spatial:
+        return
+    # Official derive_subject_fg_masks: per-subject FG vs BG argmax, not mean FG.
+    router.update_live_mask_from_class_scores(
+        live[:num_subjects].view(num_subjects, frames, spatial),
+        live[num_subjects].view(frames, spatial),
         drop_low_percent=float(params.get("ref_attn_mask_drop_low_percent", 10.0)),
         min_component_size=int(params.get("ref_attn_mask_min_component_size", 20)),
         hole_size=int(params.get("ref_attn_mask_hole_size", 0)),
@@ -369,7 +421,7 @@ def hunyuan_scene_varlen(
             )
             if attn.ndim == 2:
                 attn = attn.view(nq, heads, dim)
-            out[row].index_copy_(0, group["q"], attn)
+            out[row].index_copy_(0, group["q"], attn.to(dtype=out.dtype))
     return out.reshape(batch * seq, heads, dim)
 
 
@@ -434,6 +486,56 @@ def _iter_hy_blocks(model: Any) -> List[Any]:
     return found
 
 
+def install_hunyuan_text_refine(transformer: Any, router: FramePromptRouter) -> None:
+    """Official exp ``_refine_text_segments``: refine each scene independently."""
+    orig = getattr(transformer, "txt_in", None)
+    if orig is None or getattr(transformer, "_ss_hy_txt_refined", False):
+        return
+    hidden = int(getattr(transformer, "hidden_size", 3072) or 3072)
+
+    def refined(txt, t, mask=None):
+        cond_segments = getattr(router, "_hy_cond_text_segments", None)
+        uncond_len = getattr(router, "_hy_uncond_text_len", None)
+        if not cond_segments:
+            return orig(txt, t, mask)
+        timestep = int(getattr(transformer, "_ss_timestep", 0) or 0)
+        pieces = []
+        for row in range(int(txt.shape[0])):
+            if int(txt.shape[0]) == 2:
+                row_mode = "global" if row == 0 and timestep < 10 else "routed"
+            else:
+                pass_type = str(getattr(transformer, "_ss_pass", "cond"))
+                row_mode = "global" if pass_type == "uncond" and timestep < 10 else "routed"
+            if row_mode == "routed":
+                ranges = cond_segments
+            else:
+                end = int(uncond_len if uncond_len is not None else txt.shape[1])
+                ranges = [(0, min(end, int(txt.shape[1])))]
+            for start, end in ranges:
+                start, end = int(start), min(int(end), int(txt.shape[1]))
+                if end <= start:
+                    continue
+                pieces.append(
+                    (row, start, end, orig(txt[row : row + 1, start:end], t[row : row + 1], None))
+                )
+        if not pieces:
+            return orig(txt, t, mask)
+        refined_txt = torch.zeros(
+            txt.shape[0],
+            txt.shape[1],
+            hidden,
+            dtype=pieces[0][3].dtype,
+            device=txt.device,
+        )
+        for row, start, end, piece in pieces:
+            refined_txt[row : row + 1, start:end] = piece
+        return refined_txt
+
+    transformer.txt_in = refined
+    transformer._ss_hy_txt_refined = True
+    print("[hunyuan-adapter] per-scene SingleTokenRefiner enabled", flush=True)
+
+
 def wrap_hunyuan_transformer(model: Any, router: Optional[FramePromptRouter]) -> List[Any]:
     target = model
     if type(model).__name__ != "HYVideoDiffusionTransformer" and hasattr(model, "named_modules"):
@@ -441,12 +543,16 @@ def wrap_hunyuan_transformer(model: Any, router: Optional[FramePromptRouter]) ->
             if type(module).__name__ == "HYVideoDiffusionTransformer":
                 target = module
                 break
+    if router is not None:
+        apply_hunyuan_official_masks(router)
     blocks = _iter_hy_blocks(target)
     for idx, module in enumerate(blocks):
         _wrap_block(module, router, idx)
     for _name, mod in list(sys.modules.items()):
         if str(_name).endswith("models_audio") and hasattr(mod, "flash_attn_varlen_func"):
             install_hunyuan_flash_intercept(vars(mod))
+    if router is not None:
+        install_hunyuan_text_refine(target, router)
     if hasattr(target, "forward") and blocks:
         original = target.forward
         unseen = object()
@@ -477,6 +583,8 @@ def wrap_hunyuan_transformer(model: Any, router: Optional[FramePromptRouter]) ->
                 state["pass"] += 1
             timestep_idx = state["t_idx"]
             pass_type = "uncond" if state["pass"] == 0 else "cond"
+            self._ss_timestep = timestep_idx
+            self._ss_pass = pass_type
             for module in blocks:
                 module._ss_timestep = timestep_idx
                 module._ss_pass = pass_type

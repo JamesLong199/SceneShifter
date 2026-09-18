@@ -1,6 +1,10 @@
 import torch
 
-from sceneshifter.adapters.hunyuan_avatar import build_hunyuan_groups
+from sceneshifter.adapters.hunyuan_avatar import (
+    apply_hunyuan_official_masks,
+    build_hunyuan_groups,
+    _resize_center_crop_mask,
+)
 from sceneshifter.layouts import HunyuanMMDiTLayout
 from sceneshifter.router import FramePromptRouter
 from tests.conftest import canonical_config
@@ -44,3 +48,30 @@ def test_hunyuan_groups_offset_ref_and_isolate_text(bg_mask_path):
         owners = {0 if int(i) < 39 else 1 for i in text_keys.tolist()}
         q_owner = 0 if int(group["q"][0]) < 39 else 1
         assert owners <= {q_owner}
+
+
+def test_hunyuan_cover_crop_matches_official_formula():
+    mask = torch.zeros(16, 24)
+    mask[:, :8] = 1
+    cropped = _resize_center_crop_mask(mask, (2, 3))
+    assert tuple(cropped.shape) == (2, 3)
+    # Same-aspect cover-resize: left third stays FG.
+    assert float(cropped[:, 0].min()) == 1.0
+    assert float(cropped[:, 1:].max()) == 0.0
+
+
+def test_hunyuan_official_masks_use_cover_crop(tmp_path):
+    import numpy as np
+
+    # File polarity is 1=BG, 0=FG. Left third of a 16x24 mask is FG.
+    mask = np.ones((16, 24), dtype=np.float32)
+    mask[:, :8] = 0.0
+    path = tmp_path / "sub0.npy"
+    np.save(path, mask)
+    cfg = canonical_config(background_mask_path={"0": str(path)})
+    router = FramePromptRouter(cfg, backend="hunyuan_avatar", patch_height=2, patch_width=3)
+    apply_hunyuan_official_masks(router)
+    assert router.subject_fg_masks is not None
+    assert tuple(router.subject_fg_masks.shape) == (1, 8, 6)
+    assert bool(router.subject_fg_masks[0, 0, 0])
+    assert not bool(router.subject_fg_masks[0, 0, 1])
