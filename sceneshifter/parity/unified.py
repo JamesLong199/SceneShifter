@@ -168,6 +168,15 @@ class _TextEncoderProxy:
         out = self._inner(texts, *args, **kwargs)
         if isinstance(texts, (list, tuple)) and len(texts) >= 2 and isinstance(out, (list, tuple)):
             self._router.null_text_embeddings = out[1]
+            if getattr(self._router, "text_embeddings", None) is None:
+                prompts = (getattr(self._router, "config", {}) or {}).get("segment_prompts") or []
+                embeds = []
+                for prompt in prompts:
+                    encoded = self._inner([prompt], *args, **kwargs)
+                    embeds.append(encoded[0] if isinstance(encoded, (list, tuple)) else encoded)
+                if embeds:
+                    self._router.set_text_embeddings(embeds)
+                    print(f"[parity-unified] encoded {len(embeds)} segment prompts on official T5", flush=True)
         return out
 
     def __getattr__(self, name: str):
