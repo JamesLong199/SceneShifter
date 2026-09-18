@@ -347,16 +347,10 @@ def _maybe_update_live_ref_attn(
     max_t = int(getattr(router, "ref_loc_max_timesteps", 0) or 0)
     if max_t > 0 and int(timestep_idx) >= max_t:
         return
+    # Official MultiTalk only refreshes live ref-attn inside the scene-mask path.
     block = router.active_block(int(timestep_idx), block_idx, pass_type)
     params = (block or {}).get("params") or {}
-    if str(params.get("mask_type", "")) != "ref_attn":
-        params = {}
-        for scheduled in getattr(router, "schedule", []) or []:
-            candidate = scheduled.get("params") or {}
-            if str(candidate.get("mask_type", "")) == "ref_attn":
-                params = candidate
-                break
-    if str(params.get("mask_type", "")) != "ref_attn":
+    if block is None or str(params.get("mask_type", "")) != "ref_attn":
         return
     selectors = params.get("ref_attn_mask_selectors") or []
     if block_idx is None:

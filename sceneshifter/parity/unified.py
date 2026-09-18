@@ -164,6 +164,28 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
         print(f"[parity-unified] text embed skip: {exc}", flush=True)
 
 
+def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwargs) -> None:
+    if not (isinstance(texts, (list, tuple)) and len(texts) >= 2 and isinstance(out, (list, tuple))):
+        return
+    router.null_text_embeddings = out[1]
+    if getattr(router, "text_embeddings", None) is not None:
+        return
+    prompts = (getattr(router, "config", {}) or {}).get("segment_prompts") or []
+    neg = texts[1]
+    embeds = []
+    for prompt in prompts:
+        encoded = encode_fn([prompt, neg], *args, **kwargs)
+        embeds.append(encoded[0] if isinstance(encoded, (list, tuple)) else encoded)
+    if not embeds:
+        return
+    router.set_text_embeddings(embeds)
+    from sceneshifter.adapters.base import project_router_text_embeddings
+
+    project_router_text_embeddings(router)
+    dims = [tuple(t.shape) if hasattr(t, "shape") else None for t in router.text_embeddings]
+    print(f"[parity-unified] encoded {len(embeds)} segment prompts on official T5 {dims}", flush=True)
+
+
 class _TextEncoderProxy:
     """Preserve T5EncoderModel.model while capturing the official null prompt."""
 
@@ -174,28 +196,7 @@ class _TextEncoderProxy:
 
     def __call__(self, texts, *args, **kwargs):
         out = self._inner(texts, *args, **kwargs)
-        if isinstance(texts, (list, tuple)) and len(texts) >= 2 and isinstance(out, (list, tuple)):
-            self._router.null_text_embeddings = out[1]
-            if getattr(self._router, "text_embeddings", None) is None:
-                prompts = (getattr(self._router, "config", {}) or {}).get("segment_prompts") or []
-                neg = texts[1]
-                embeds = []
-                for prompt in prompts:
-                    encoded = self._inner([prompt, neg], *args, **kwargs)
-                    embeds.append(encoded[0] if isinstance(encoded, (list, tuple)) else encoded)
-                if embeds:
-                    self._router.set_text_embeddings(embeds)
-                    from sceneshifter.adapters.base import project_router_text_embeddings
-
-                    project_router_text_embeddings(self._router)
-                    dims = [
-                        tuple(t.shape) if hasattr(t, "shape") else None
-                        for t in self._router.text_embeddings
-                    ]
-                    print(
-                        f"[parity-unified] encoded {len(embeds)} segment prompts on official T5 {dims}",
-                        flush=True,
-                    )
+        _record_official_text_encode(self._router, self._inner, texts, out, args, kwargs)
         return out
 
     def __getattr__(self, name: str):
@@ -206,7 +207,24 @@ def _capture_null_context(pipeline: Any, router: Any) -> None:
     encoder = getattr(pipeline, "text_encoder", None)
     if encoder is None or not callable(encoder) or getattr(encoder, "_ss_null_captured", False):
         return
-    pipeline.text_encoder = _TextEncoderProxy(encoder, router)
+    modules = getattr(pipeline, "_modules", None)
+    if isinstance(modules, dict) and modules.get("text_encoder") is encoder:
+        import types
+
+        original_forward = encoder.forward
+
+        def wrapped(self, texts, *args, **kwargs):
+            out = original_forward(texts, *args, **kwargs)
+            _record_official_text_encode(router, original_forward, texts, out, args, kwargs)
+            return out
+
+        encoder.forward = types.MethodType(wrapped, encoder)
+        encoder._ss_null_captured = True
+        return
+    try:
+        pipeline.text_encoder = _TextEncoderProxy(encoder, router)
+    except TypeError:
+        encoder._ss_null_captured = True
 
 
 def _wrap_named_classes(mod: Any, names: List[str], router: Any, adapter: str) -> None:
