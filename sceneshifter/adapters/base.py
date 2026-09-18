@@ -159,11 +159,13 @@ def _maybe_update_spatial(router: FramePromptRouter, module: nn.Module, q: torch
 
 
 def _extract_qkv(args: Tuple[Any, ...], kwargs: Dict[str, Any]):
-    if "q" in kwargs:
-        return kwargs["q"], kwargs["k"], kwargs["v"], True
-    if len(args) >= 3:
-        return args[0], args[1], args[2], False
-    raise TypeError("attention kernel did not receive q/k/v")
+    q = kwargs["q"] if "q" in kwargs else (args[0] if len(args) > 0 else None)
+    k = kwargs["k"] if "k" in kwargs else (args[1] if len(args) > 1 else None)
+    v = kwargs["v"] if "v" in kwargs else (args[2] if len(args) > 2 else None)
+    if q is None or k is None or v is None:
+        raise TypeError("attention kernel did not receive q/k/v")
+    used_kw = "q" in kwargs and "k" in kwargs and "v" in kwargs
+    return q, k, v, used_kw
 
 
 def _projector_dims(module: nn.Module) -> Tuple[Optional[int], Optional[int]]:
@@ -245,16 +247,16 @@ def _call_official_flash(
     subset: bool,
 ):
     call_kwargs = dict(kwargs)
+    call_kwargs.pop("q", None)
+    call_kwargs.pop("k", None)
+    call_kwargs.pop("v", None)
     if subset:
         # Subset tensors are dense; original packed lengths no longer apply.
         call_kwargs.pop("q_lens", None)
         call_kwargs.pop("k_lens", None)
     if used_kw:
-        call_kwargs["q"] = q
-        call_kwargs["k"] = k
-        call_kwargs["v"] = v
-        return orig(**call_kwargs)
-    return orig(q, k, v, *args[3:], **call_kwargs)
+        return orig(q=q, k=k, v=v, **call_kwargs)
+    return orig(q, k, v, **call_kwargs)
 
 
 def _install_rope_stash(globals_dict: Dict[str, Any]) -> bool:

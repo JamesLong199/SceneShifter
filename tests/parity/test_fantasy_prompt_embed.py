@@ -243,6 +243,22 @@ def test_fantasy_audio_cfg_gate_reuses_posi_before_start():
     assert not torch.equal(third, first)
 
 
+def test_extract_qkv_mixed_v_keyword():
+    from sceneshifter.adapters.base import _call_official_flash, _extract_qkv
+
+    q, k, v = torch.zeros(1), torch.ones(1), torch.full((1,), 2.0)
+    gq, gk, gv, used_kw = _extract_qkv((q, k), {"v": v, "k_lens": 3})
+    assert gq is q and gk is k and gv is v
+    assert used_kw is False
+    seen = {}
+
+    def orig(qq, kk, vv, k_lens=None):
+        seen["args"] = (qq, kk, vv, k_lens)
+
+    _call_official_flash(orig, "attention", q, k, v, (q, k), {"v": v, "k_lens": 3}, False, subset=False)
+    assert seen["args"] == (q, k, v, 3)
+
+
 def test_allow_missing_flex_attention_is_safe():
     from sceneshifter.parity.unified import _allow_missing_flex_attention
 
