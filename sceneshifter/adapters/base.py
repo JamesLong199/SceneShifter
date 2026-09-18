@@ -560,7 +560,7 @@ def scene_masked_official_flash(
         )
         if isinstance(piece, tuple):
             piece = piece[0]
-        out.index_copy_(1, q_idx, piece)
+        out.index_copy_(1, q_idx, piece.to(dtype=out.dtype))
 
     for segment in range(router.num_segments):
         row = block["_mask"][segment]
@@ -635,7 +635,7 @@ def scene_masked_official_flash(
         )
         if isinstance(piece, tuple):
             piece = piece[0]
-        out.index_copy_(1, extra_idx, piece)
+        out.index_copy_(1, extra_idx, piece.to(dtype=out.dtype))
     _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
     return out
 
