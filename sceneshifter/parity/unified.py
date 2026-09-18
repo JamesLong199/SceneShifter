@@ -159,7 +159,37 @@ def _wrap_create_pipeline(mod: Any, router: Any, adapter: str, routing: Dict[str
     mod.create_pipeline = wrapped
 
 
+def _filter_official_argv(mod: Any, argv: List[str]) -> List[str]:
+    """Drop CLI flags the official parser does not declare."""
+    source_files = []
+    for candidate in (getattr(mod, "__file__", None),):
+        if candidate and Path(candidate).is_file():
+            source_files.append(Path(candidate).read_text(errors="ignore"))
+    blob = "\n".join(source_files)
+    filtered: List[str] = []
+    skip_next = False
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if skip_next:
+            skip_next = False
+            i += 1
+            continue
+        if tok.startswith("--"):
+            key = tok.split("=", 1)[0]
+            if key not in blob:
+                print(f"[parity-unified] drop unsupported official flag {tok}", flush=True)
+                if "=" not in tok and i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                    skip_next = True
+                i += 1
+                continue
+        filtered.append(tok)
+        i += 1
+    return filtered
+
+
 def _invoke_generate(mod: Any, script: str, argv: List[str]) -> None:
+    argv = _filter_official_argv(mod, argv)
     old = sys.argv
     sys.argv = [script, *argv]
     try:
@@ -224,7 +254,7 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     except Exception as exc:  # noqa: BLE001
         print(f"[parity-unified] wan class wrap skip: {exc}", flush=True)
 
-    save = out_dir / "videos" / f"{cfg['sample_id']}_sceneshifter.mp4"
+    save = out_dir / "videos" / f"{cfg['sample_id']}_sceneshifter"
     save.parent.mkdir(parents=True, exist_ok=True)
     argv = [
         "--ckpt_dir", str(unified["ckpt_dir"]),
