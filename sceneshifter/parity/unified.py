@@ -206,6 +206,12 @@ def _install_encode_prompt_hook(pipeline: Any, router: Any, routing: Dict[str, A
                 try:
                     embeds = [original(seg, positive=True) for seg in prompts]
                     _commit_text_embeddings(router, pipeline, embeds, source="encode_prompt hook")
+                    try:
+                        import torch
+
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
                 except Exception as exc:  # noqa: BLE001
                     print(f"[parity-unified] encode_prompt hook skip: {exc}", flush=True)
         return out
@@ -572,7 +578,13 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
         flush=True,
     )
     _inject(pipe.dit, router, "fantasytalking")
-    _maybe_set_text_embeddings(router, pipe, routing)
+    # Encode segments later, when official __call__ has only T5 onloaded.
+    _install_encode_prompt_hook(pipe, router, routing)
+    try:
+        _capture_null_context(pipe, router)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[parity-unified] capture skip: {exc}", flush=True)
+    torch.cuda.empty_cache()
     audio_proj_fea = fantasytalking.get_proj_fea(audio_wav2vec_fea)
     pos_idx_ranges = fantasytalking.split_audio_sequence(audio_proj_fea.size(1), num_frames=num_frames)
     audio_proj_split, audio_context_lens = fantasytalking.split_tensor_with_padding(
