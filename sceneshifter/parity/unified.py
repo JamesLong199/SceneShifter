@@ -621,6 +621,33 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     save_videos_grid(video, str(save), fps=16)
 
 
+def _sceneshifter_aspect_bucket(image_path: str) -> tuple[int, int]:
+    """Match Hunyuan batch_generate_sceneshifter ASPECT_BUCKETS (H, W)."""
+    import math
+
+    from PIL import Image
+
+    buckets = {
+        "1_1": (640, 640),
+        "2_3": (768, 512),
+        "3_2": (512, 768),
+        "4_3": (576, 768),
+        "3_4": (768, 576),
+    }
+    values = {
+        "1_1": 1.0,
+        "2_3": 2.0 / 3.0,
+        "3_2": 3.0 / 2.0,
+        "4_3": 4.0 / 3.0,
+        "3_4": 3.0 / 4.0,
+    }
+    with Image.open(image_path) as image:
+        width, height = image.size
+    ratio = width / max(height, 1)
+    label = min(values, key=lambda name: abs(math.log(ratio / values[name])))
+    return buckets[label]
+
+
 def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None:
     import csv
     import subprocess
@@ -634,7 +661,6 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
 
     unified = cfg["unified"]
     routing = _load_routing(cfg)
-    router = _create_router(cfg, routing, patch_h=44, patch_w=44)
     meta = _metadata(cfg)
     root = Path(cfg["dataset_root"])
     _push_path(official)
@@ -655,6 +681,9 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
         audio = next(iter(audio.values()))
     audio = _resolve_media(root, audio)
     prompt = meta.get("prompt") or routing.get("segment_prompts", [""])[0]
+    target_h, target_w = _sceneshifter_aspect_bucket(image)
+    # Hunyuan VAE is 16x on the SceneShifter 480-class buckets (512x768 -> 32x48).
+    router = _create_router(cfg, routing, patch_h=target_h // 16, patch_w=target_w // 16)
     save_dir = out_dir / "videos"
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -669,7 +698,7 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
         "--ckpt", ckpt,
         "--sample-n-frames", "129",
         "--seed", str(unified.get("base_seed", 43)),
-        "--image-size", "704",
+        "--image-size", "512",
         "--cfg-scale", str(unified.get("cfg_scale", 7.5)),
         "--infer-steps", str(unified.get("infer_steps", 50)),
         "--flow-shift-eval-video", str(unified.get("flow_shift", 5.0)),
@@ -686,7 +715,11 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
 
     install_hunyuan_prompt_routing(sampler.pipeline, router, routing, meta)
     bound = _inject(sampler, router, "hunyuan_avatar")
-    print(f"[parity-unified] hunyuan bound {len(bound)} MMDiT blocks", flush=True)
+    print(
+        f"[parity-unified] hunyuan bound {len(bound)} MMDiT blocks "
+        f"target={target_h}x{target_w}",
+        flush=True,
+    )
     _maybe_set_text_embeddings(router, sampler, routing)
 
     whisper_path = os.path.join(unified["model_base"], "ckpts", "whisper-tiny")
@@ -709,19 +742,25 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
                 "fps": 25.0,
             }
         )
-    dataset = VideoAudioTextLoaderVal(
-        image_size=704,
+    dataset_kwargs = dict(
+        image_size=512,
         meta_file=str(csv_path),
         text_encoder=sampler.text_encoder,
         text_encoder_2=sampler.text_encoder_2,
         feature_extractor=feature_extractor,
     )
+    try:
+        dataset = VideoAudioTextLoaderVal(target_size=(target_h, target_w), **dataset_kwargs)
+    except TypeError:
+        dataset = VideoAudioTextLoaderVal(**dataset_kwargs)
     batch = next(iter(DataLoader(dataset, batch_size=1, shuffle=False)))
+    # Feature-branch --infer-min default: standard 129-frame (~5s) clip.
+    batch["audio_len"][0] = 129
     model_args.seed = int(unified.get("base_seed", 43))
     torch.cuda.empty_cache()
     samples = sampler.predict(model_args, batch, wav2vec, feature_extractor, align_instance)
     sample = samples["samples"][0]
-    frame_count = min(int(batch["audio_len"][0]), sample.shape[1])
+    frame_count = min(129, int(batch["audio_len"][0]), sample.shape[1])
     video = rearrange(sample[:, :frame_count], "c f h w -> f h w c")
     video = (video * 255.0).clamp(0, 255).cpu().numpy().astype(np.uint8)
     raw_path = save_dir / f"{cfg['sample_id']}.video-only.mp4"
