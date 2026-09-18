@@ -14,6 +14,7 @@ import torch
 import torch.nn as nn
 
 from ..attention import gather_attention, scaled_dot_product
+from ..ref_attn import get_attn_map_with_target_per_head
 from ..router import FramePromptRouter
 
 _CURRENT_MODULE: contextvars.ContextVar[Optional[nn.Module]] = contextvars.ContextVar(
@@ -57,6 +58,37 @@ def find_attention_modules(
     return list(dict.fromkeys(self_mods)), list(dict.fromkeys(cross_mods))
 
 
+def find_audio_modules(model: Any) -> List[Any]:
+    mods: List[Any] = []
+    if not hasattr(model, "named_modules"):
+        return mods
+    for name, module in model.named_modules():
+        tail = name.rsplit(".", 1)[-1]
+        if tail == "audio_cross_attn" or type(module).__name__ == "SingleStreamMutiAttention":
+            mods.append(module)
+    return list(dict.fromkeys(mods))
+
+
+def wrap_audio_attention(module: nn.Module, router: Optional[FramePromptRouter]) -> nn.Module:
+    """Official main always adds audio residual; feature-branch skips it before start."""
+    if getattr(module, "_ss_audio_wrapped", False):
+        return module
+    original = module.forward
+    module.frame_prompt_router = router
+
+    def forward(self, x, *args, **kwargs):
+        active = getattr(self, "frame_prompt_router", None)
+        timestep_idx = int(getattr(self, "_ss_timestep", 0) or 0)
+        start = int(getattr(active, "audio_start_timestep", 0) or 0) if active is not None else 0
+        if active is not None and int(timestep_idx) < start:
+            return torch.zeros_like(x)
+        return original(x, *args, **kwargs)
+
+    module.forward = types.MethodType(forward, module)
+    module._ss_audio_wrapped = True
+    return module
+
+
 def _project_qkv(module: nn.Module, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     q_lin = getattr(module, "q", None) or getattr(module, "to_q", None)
     k_lin = getattr(module, "k", None) or getattr(module, "to_k", None)
@@ -85,31 +117,40 @@ def _maybe_update_spatial(router: FramePromptRouter, module: nn.Module, q: torch
         row = grid[0]
         gh, gw = int(row[1]), int(row[2])
         spatial = gh * gw
-        if spatial > 0 and spatial != router.spatial_tokens:
-            old = int(router.spatial_tokens)
-            router.patch_height = gh
-            router.patch_width = gw
-            router.spatial_tokens = spatial
-            for attr in ("static_bg", "live_bg"):
-                mask = getattr(router, attr, None)
-                if mask is None or mask.numel() == 0 or mask.shape[-1] != old:
-                    continue
-                frames = int(mask.shape[0])
-                src = mask.reshape(frames, 1, old).float()
-                resized = torch.nn.functional.interpolate(src, size=spatial, mode="nearest")
-                setattr(router, attr, resized.reshape(frames, spatial) > 0.5)
-            subjects = getattr(router, "subject_fg_masks", None)
-            if subjects is not None and subjects.numel() and subjects.shape[-1] == old:
-                n_subj, frames = int(subjects.shape[0]), int(subjects.shape[1])
-                src = subjects.reshape(n_subj * frames, 1, old).float()
-                resized = torch.nn.functional.interpolate(src, size=spatial, mode="nearest")
-                router.subject_fg_masks = resized.reshape(n_subj, frames, spatial) > 0.5
-            live_fg = getattr(router, "live_subject_fg", None)
-            if live_fg is not None and live_fg.numel() and live_fg.shape[-1] == old:
-                n_subj, frames = int(live_fg.shape[0]), int(live_fg.shape[1])
-                src = live_fg.reshape(n_subj * frames, 1, old).float()
-                resized = torch.nn.functional.interpolate(src, size=spatial, mode="nearest")
-                router.live_subject_fg = resized.reshape(n_subj, frames, spatial) > 0.5
+        if spatial <= 0 or spatial == router.spatial_tokens:
+            return
+        old = int(router.spatial_tokens)
+        router.patch_height = gh
+        router.patch_width = gw
+        router.spatial_tokens = spatial
+        raw = getattr(router, "raw_subject_fg", None)
+        if raw is not None:
+            from ..masks import downsample_subject_fg
+
+            router.subject_fg_masks, router.static_bg = downsample_subject_fg(raw, gh, gw)
+            router.live_bg = None
+            router.live_subject_fg = None
+            return
+        for attr in ("static_bg", "live_bg"):
+            mask = getattr(router, attr, None)
+            if mask is None or mask.numel() == 0 or mask.shape[-1] != old:
+                continue
+            frames = int(mask.shape[0])
+            src = mask.reshape(frames, 1, old).float()
+            resized = torch.nn.functional.interpolate(src, size=spatial, mode="nearest")
+            setattr(router, attr, resized.reshape(frames, spatial) > 0.5)
+        subjects = getattr(router, "subject_fg_masks", None)
+        if subjects is not None and subjects.numel() and subjects.shape[-1] == old:
+            n_subj, frames = int(subjects.shape[0]), int(subjects.shape[1])
+            src = subjects.reshape(n_subj * frames, 1, old).float()
+            resized = torch.nn.functional.interpolate(src, size=spatial, mode="nearest")
+            router.subject_fg_masks = resized.reshape(n_subj, frames, spatial) > 0.5
+        live_fg = getattr(router, "live_subject_fg", None)
+        if live_fg is not None and live_fg.numel() and live_fg.shape[-1] == old:
+            n_subj, frames = int(live_fg.shape[0]), int(live_fg.shape[1])
+            src = live_fg.reshape(n_subj * frames, 1, old).float()
+            resized = torch.nn.functional.interpolate(src, size=spatial, mode="nearest")
+            router.live_subject_fg = resized.reshape(n_subj, frames, spatial) > 0.5
     except Exception:
         if q.ndim >= 2 and router.num_frames > 0:
             guessed = int(q.shape[1]) // int(router.num_frames)
@@ -333,7 +374,29 @@ def _ref_target_masks(router: FramePromptRouter, spatial: int, device, dtype) ->
     return torch.cat([subject.to(dtype=dtype), background.to(dtype=dtype)], dim=0)
 
 
-def _maybe_update_live_ref_attn(
+def _ref_attn_schedule_params(router: FramePromptRouter) -> Optional[Dict[str, Any]]:
+    for block in getattr(router, "schedule", []) or []:
+        params = (block or {}).get("params") or {}
+        if str(params.get("mask_type", "")) == "ref_attn":
+            return params
+    return None
+
+
+def _wanted_ref_heads(params: Dict[str, Any], block_idx: Any, num_heads: int) -> List[int]:
+    selectors = params.get("ref_attn_mask_selectors") or []
+    wanted = [int(head) for layer, head in selectors if int(layer) == int(block_idx)]
+    layer_only = params.get("ref_attn_mask_layer")
+    head_only = params.get("ref_attn_mask_head")
+    if not wanted and layer_only is not None:
+        if int(block_idx) != int(layer_only):
+            return []
+        return list(range(int(num_heads))) if head_only is None else [int(head_only)]
+    if not wanted and not selectors:
+        return list(range(int(num_heads)))
+    return wanted
+
+
+def _collect_live_ref_attn(
     router: FramePromptRouter,
     module: nn.Module,
     q: torch.Tensor,
@@ -342,31 +405,18 @@ def _maybe_update_live_ref_attn(
     block_idx: Any,
     pass_type: str,
 ) -> None:
+    """Store official get_attn_map scores. Do not apply a live mask here."""
     if pass_type == "uncond" or bool(getattr(router, "freeze_live_mask", False)):
         return
     max_t = int(getattr(router, "ref_loc_max_timesteps", 0) or 0)
     if max_t > 0 and int(timestep_idx) >= max_t:
         return
-    # Official MultiTalk only refreshes live ref-attn inside the scene-mask path.
-    block = router.active_block(int(timestep_idx), block_idx, pass_type)
-    params = (block or {}).get("params") or {}
-    if block is None or str(params.get("mask_type", "")) != "ref_attn":
-        return
-    selectors = params.get("ref_attn_mask_selectors") or []
     if block_idx is None:
         return
-    wanted_heads = [
-        int(head) for layer, head in selectors if int(layer) == int(block_idx)
-    ]
-    layer_only = params.get("ref_attn_mask_layer")
-    head_only = params.get("ref_attn_mask_head")
-    if not wanted_heads and layer_only is not None:
-        if int(block_idx) != int(layer_only):
-            return
-        wanted_heads = list(range(int(q.shape[2]))) if head_only is None else [int(head_only)]
-    if not wanted_heads and not selectors:
-        # Layer-headavg: current layer, all heads.
-        wanted_heads = list(range(int(q.shape[2])))
+    params = _ref_attn_schedule_params(router)
+    if params is None:
+        return
+    wanted_heads = _wanted_ref_heads(params, block_idx, int(q.shape[2]))
     if not wanted_heads:
         return
     spatial = int(router.spatial_tokens)
@@ -376,32 +426,44 @@ def _maybe_update_live_ref_attn(
     targets = _ref_target_masks(router, spatial, q.device, q.dtype)
     if targets is None:
         return
-    scale = 1.0 / float(q.shape[-1]) ** 0.5
-    video_q = q[:, :video].float() * scale
-    ref_k = k[:, :spatial].float()
-    num_subjects = int(targets.shape[0] - 1)
-    collected = []
+    grid = getattr(module, "_ss_grid_sizes", None)
+    if grid is not None:
+        row = grid[0]
+        shape = (int(row[0]), int(row[1]), int(row[2]))
+    else:
+        shape = (int(router.num_frames), int(router.patch_height), int(router.patch_width))
+    head_mask = torch.zeros(int(q.shape[2]), device=q.device, dtype=q.dtype)
     for head in wanted_heads:
-        if head < 0 or head >= int(q.shape[2]):
-            continue
-        logits = torch.matmul(
-            video_q[:, :, head],
-            ref_k[:, :, head].transpose(-2, -1),
-        )
-        probs = logits.softmax(dim=-1)
-        denom = targets.sum(dim=-1).clamp_min(1.0).view(1, -1, 1)
-        scores = torch.einsum("bqr,cr->bcq", probs, targets.to(dtype=probs.dtype)) / denom
-        collected.append(scores[0, :num_subjects])
-    if not collected:
-        return
-    stacked = torch.stack(collected, dim=0).mean(0)
-    fg = stacked.view(num_subjects, router.num_frames, spatial)
-    router.update_live_mask_from_scores(
-        fg,
-        drop_low_percent=float(params.get("ref_attn_mask_drop_low_percent", 10.0)),
-        min_component_size=int(params.get("ref_attn_mask_min_component_size", 20)),
-        hole_size=int(params.get("ref_attn_mask_hole_size", 0)),
+        if 0 <= int(head) < int(q.shape[2]):
+            head_mask[int(head)] = 1
+    per_head = get_attn_map_with_target_per_head(
+        q[:, :video],
+        k,
+        shape,
+        targets,
+        head_mask=head_mask,
     )
+    if per_head is None:
+        return
+    num_subjects = int(targets.shape[0] - 1)
+    # per_head: [C, seq, heads]
+    seq = int(per_head.shape[1])
+    if seq != video or video % spatial != 0:
+        return
+    fg_maps = per_head[:num_subjects].reshape(num_subjects, router.num_frames, spatial, -1)
+    bg_map = per_head[num_subjects].reshape(router.num_frames, spatial, -1)
+    for head in wanted_heads:
+        if head < 0 or head >= int(fg_maps.shape[-1]):
+            continue
+        if torch.isnan(fg_maps[0, :, :, head]).all():
+            continue
+        router.store_ref_loc_head(
+            timestep_idx,
+            int(block_idx),
+            int(head),
+            fg_maps[:, :, :, head],
+            bg_map[:, :, head],
+        )
 
 
 def _query_indices(
@@ -440,8 +502,10 @@ def scene_masked_official_flash(
     if block is None:
         # Keep official packed-sequence flash (k_lens=seq_lens). Do not rewrite q/k/v.
         out = orig(*args, **kwargs)
-        _maybe_update_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
+        # Collect vanilla scores so scheduled steps can build the live mask.
+        _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
         return out
+    router.refresh_live_mask_from_stored(timestep_idx, block)
 
     q = router.apply_q_scale(q, block)
     out = q.new_zeros(q.shape)
@@ -544,7 +608,7 @@ def scene_masked_official_flash(
         if isinstance(piece, tuple):
             piece = piece[0]
         out.index_copy_(1, extra_idx, piece)
-    _maybe_update_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
+    _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
     return out
 
 
@@ -765,19 +829,22 @@ def thread_timestep(model: Any) -> None:
             start = int(getattr(router, "audio_start_timestep", 0) or 0)
             if int(timestep_idx) < start:
                 kwargs = dict(kwargs)
-                audio = kwargs.get("audio")
-                if torch.is_tensor(audio):
-                    kwargs["audio"] = torch.zeros_like(audio[:1] if audio.shape[0] > 1 else audio)
                 # FantasyTalking official main gates audio with audio_scale, not `audio`.
                 if "audio_scale" in kwargs:
                     kwargs["audio_scale"] = 0.0
         kwargs.setdefault("timestep_idx", timestep_idx)
         kwargs.setdefault("pass_type", pass_type)
         self_mods, cross_mods = find_attention_modules(self)
+        audio_mods = find_audio_modules(self)
         for idx, module in enumerate(self_mods + cross_mods):
             module._ss_timestep = timestep_idx
             module._ss_pass = pass_type
             module._ss_block_idx = idx if module in self_mods else idx - len(self_mods)
+        for module in audio_mods:
+            module._ss_timestep = timestep_idx
+            module._ss_pass = pass_type
+            if router is not None:
+                module.frame_prompt_router = router
         # Official Wan/Hunyuan forwards do not accept these bookkeeping kwargs.
         kwargs.pop("timestep_idx", None)
         kwargs.pop("pass_type", None)

@@ -23,7 +23,11 @@ from .qscale_scope import (
     new_scene_bounds_from_segments,
     new_scene_scale_token_mask,
 )
-from .ref_attn import live_bg_from_subject_fg, postprocess_live_fg
+from .ref_attn import (
+    derive_live_fg_from_class_scores,
+    live_bg_from_subject_fg,
+    postprocess_live_fg,
+)
 
 
 def scene_frame_bounds(num_frames: int, frame_splits: Sequence[int]) -> List[Tuple[int, int]]:
@@ -150,6 +154,7 @@ class FramePromptRouter:
         self.schedule = normalize_schedule(schedule, self.num_segments)
 
         self.subject_fg_masks: Optional[torch.Tensor] = None
+        self.raw_subject_fg: Optional[torch.Tensor] = None
         self.static_bg: Optional[torch.Tensor] = None
         self.live_bg: Optional[torch.Tensor] = None
         self.live_subject_fg: Optional[torch.Tensor] = None
@@ -160,12 +165,14 @@ class FramePromptRouter:
         paths = cfg.get("background_mask_path")
         if paths:
             raw_fg = subject_fg_from_background_paths(paths, self.num_frames)
+            self.raw_subject_fg = raw_fg
             self.subject_fg_masks, self.static_bg = downsample_subject_fg(
                 raw_fg, self.patch_height, self.patch_width
             )
 
         self._selector_scores: Dict[Any, Any] = {}
         self._pending_selector_scores: Dict[Any, Any] = {}
+        self._ref_loc_scores: Dict[Tuple[int, int, int], Tuple[torch.Tensor, torch.Tensor]] = {}
 
     def set_text_embeddings(self, embeddings: List[torch.Tensor]) -> None:
         if len(embeddings) != self.num_segments:
@@ -401,9 +408,18 @@ class FramePromptRouter:
         drop_low_percent: float = 20.0,
         min_component_size: int = 20,
         hole_size: int = 0,
+        bg_scores: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if bool(self.freeze_live_mask) and self.live_bg is not None:
             return self.live_bg
+        if bg_scores is not None:
+            return self.update_live_mask_from_class_scores(
+                scores,
+                bg_scores,
+                drop_low_percent=drop_low_percent,
+                min_component_size=min_component_size,
+                hole_size=hole_size,
+            )
         value = scores.detach()
         if value.ndim == 2:
             value = value.unsqueeze(0)
@@ -424,6 +440,101 @@ class FramePromptRouter:
         self.live_subject_fg = live_fg
         self.live_bg = live_bg_from_subject_fg(self.live_subject_fg)
         return self.live_bg
+
+    def update_live_mask_from_class_scores(
+        self,
+        fg_scores: torch.Tensor,
+        bg_scores: torch.Tensor,
+        *,
+        drop_low_percent: float = 20.0,
+        min_component_size: int = 20,
+        hole_size: int = 0,
+    ) -> torch.Tensor:
+        if bool(self.freeze_live_mask) and self.live_bg is not None:
+            return self.live_bg
+        live_fg = derive_live_fg_from_class_scores(
+            fg_scores,
+            bg_scores,
+            self.patch_height,
+            self.patch_width,
+            drop_low_percent=drop_low_percent,
+            min_component_size=min_component_size,
+            hole_size=hole_size,
+        )
+        if live_fg is None:
+            return self.update_live_mask_from_scores(
+                fg_scores,
+                drop_low_percent=drop_low_percent,
+                min_component_size=min_component_size,
+                hole_size=hole_size,
+            )
+        self.live_subject_fg = live_fg
+        self.live_bg = live_bg_from_subject_fg(self.live_subject_fg)
+        return self.live_bg
+
+    def store_ref_loc_head(
+        self,
+        timestep_idx: int,
+        layer_idx: int,
+        head_idx: int,
+        fg: torch.Tensor,
+        bg: torch.Tensor,
+    ) -> None:
+        self._ref_loc_scores[(int(timestep_idx), int(layer_idx), int(head_idx))] = (
+            fg.detach().float().cpu(),
+            bg.detach().float().cpu(),
+        )
+
+    def latest_ref_loc_timestep(self, timestep_idx: int) -> Optional[int]:
+        times = {ts for ts, _, _ in self._ref_loc_scores if int(ts) <= int(timestep_idx)}
+        return max(times) if times else None
+
+    def selector_avg_scores(
+        self,
+        timestep_idx: int,
+        selectors: Sequence[Sequence[int]],
+    ) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        latest = self.latest_ref_loc_timestep(timestep_idx)
+        if latest is None:
+            return None, None
+        fgs: List[torch.Tensor] = []
+        bgs: List[torch.Tensor] = []
+        for pair in selectors:
+            if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+                continue
+            key = (int(latest), int(pair[0]), int(pair[1]))
+            stored = self._ref_loc_scores.get(key)
+            if stored is None:
+                continue
+            fgs.append(stored[0])
+            bgs.append(stored[1])
+        if not fgs:
+            return None, None
+        return torch.stack(fgs, dim=0).mean(0), torch.stack(bgs, dim=0).mean(0)
+
+    def refresh_live_mask_from_stored(
+        self,
+        timestep_idx: int,
+        block: Optional[Dict[str, Any]],
+    ) -> Optional[torch.Tensor]:
+        if block is None:
+            return self.live_bg
+        params = block.get("params") or {}
+        if str(params.get("mask_type", "")) != "ref_attn":
+            return self.live_bg
+        selectors = params.get("ref_attn_mask_selectors") or []
+        fg, bg = (None, None)
+        if selectors:
+            fg, bg = self.selector_avg_scores(timestep_idx, selectors)
+        if fg is None or bg is None:
+            return self.live_bg
+        return self.update_live_mask_from_class_scores(
+            fg,
+            bg,
+            drop_low_percent=float(params.get("ref_attn_mask_drop_low_percent", 10.0)),
+            min_component_size=int(params.get("ref_attn_mask_min_component_size", 20)),
+            hole_size=int(params.get("ref_attn_mask_hole_size", 0)),
+        )
 
     def complete_denoising_step(self) -> None:
         """S2V-style publish: pending selector scores become visible after CFG."""

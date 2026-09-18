@@ -75,6 +75,37 @@ def _write_input_json(cfg: Dict[str, Any], out_dir: Path) -> Path:
     return path
 
 
+def _talking_latent_hw(image_path: str) -> tuple[int, int]:
+    """Match InfiniteTalk/MultiTalk 480p ASPECT_RATIO_627 → DiT tokens (H/16, W/16)."""
+    from PIL import Image
+
+    buckets = {
+        0.26: (320, 1216),
+        0.38: (384, 1024),
+        0.50: (448, 896),
+        0.67: (512, 768),
+        0.75: (576, 768),
+        0.82: (576, 704),
+        1.00: (640, 640),
+        1.22: (704, 576),
+        1.33: (768, 576),
+        1.50: (768, 512),
+        1.86: (832, 448),
+        2.00: (896, 448),
+        2.50: (960, 384),
+        2.83: (1088, 384),
+        3.60: (1152, 320),
+        3.80: (1216, 320),
+        4.00: (1280, 320),
+    }
+    with Image.open(image_path) as image:
+        width, height = image.size
+    ratio = height / max(width, 1)
+    key = min(buckets, key=lambda item: abs(float(item) - ratio))
+    target_h, target_w = buckets[key]
+    return target_h // 16, target_w // 16
+
+
 def _create_router(cfg: Dict[str, Any], routing: Dict[str, Any], patch_h: int = 30, patch_w: int = 52):
     from sceneshifter.router import create_router
 
@@ -396,7 +427,14 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     unified = cfg["unified"]
     input_json = _write_input_json(cfg, out_dir)
     routing = _load_routing(cfg)
-    router = _create_router(cfg, routing)
+    meta = _metadata(cfg)
+    cond_image = _resolve_media(Path(cfg.get("dataset_root")), meta.get("cond_image"))
+    try:
+        patch_h, patch_w = _talking_latent_hw(str(cond_image))
+    except Exception:
+        patch_h, patch_w = 32, 48
+    router = _create_router(cfg, routing, patch_h=patch_h, patch_w=patch_w)
+    print(f"[parity-unified] talking router tokens {patch_h}x{patch_w}", flush=True)
     _push_path(official)
     os.chdir(official)
     script = unified.get("official_script", "generate_multitalk.py")
