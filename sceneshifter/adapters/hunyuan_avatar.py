@@ -520,12 +520,13 @@ def _iter_hy_blocks(model: Any) -> List[Any]:
 
 def install_hunyuan_text_refine(transformer: Any, router: FramePromptRouter) -> None:
     """Official exp ``_refine_text_segments``: refine each scene independently."""
-    orig = getattr(transformer, "txt_in", None)
-    if orig is None or getattr(transformer, "_ss_hy_txt_refined", False):
+    module = getattr(transformer, "txt_in", None)
+    if module is None or getattr(module, "_ss_hy_txt_refined", False):
         return
+    orig = module.forward
     hidden = int(getattr(transformer, "hidden_size", 3072) or 3072)
 
-    def refined(txt, t, mask=None):
+    def forward(self, txt, t, mask=None):
         cond_segments = getattr(router, "_hy_cond_text_segments", None)
         uncond_len = getattr(router, "_hy_uncond_text_len", None)
         if not cond_segments:
@@ -563,8 +564,8 @@ def install_hunyuan_text_refine(transformer: Any, router: FramePromptRouter) -> 
             refined_txt[row : row + 1, start:end] = piece
         return refined_txt
 
-    transformer.txt_in = refined
-    transformer._ss_hy_txt_refined = True
+    module.forward = types.MethodType(forward, module)
+    module._ss_hy_txt_refined = True
     print("[hunyuan-adapter] per-scene SingleTokenRefiner enabled", flush=True)
 
 
