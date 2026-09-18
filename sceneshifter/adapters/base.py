@@ -763,10 +763,14 @@ def thread_timestep(model: Any) -> None:
             pass_type = "cond" if state["pass"] == 0 else "uncond"
         if router is not None:
             start = int(getattr(router, "audio_start_timestep", 0) or 0)
-            audio = kwargs.get("audio")
-            if int(timestep_idx) < start and torch.is_tensor(audio):
+            if int(timestep_idx) < start:
                 kwargs = dict(kwargs)
-                kwargs["audio"] = torch.zeros_like(audio[:1] if audio.shape[0] > 1 else audio)
+                audio = kwargs.get("audio")
+                if torch.is_tensor(audio):
+                    kwargs["audio"] = torch.zeros_like(audio[:1] if audio.shape[0] > 1 else audio)
+                # FantasyTalking official main gates audio with audio_scale, not `audio`.
+                if "audio_scale" in kwargs:
+                    kwargs["audio_scale"] = 0.0
         kwargs.setdefault("timestep_idx", timestep_idx)
         kwargs.setdefault("pass_type", pass_type)
         self_mods, cross_mods = find_attention_modules(self)
@@ -779,6 +783,7 @@ def thread_timestep(model: Any) -> None:
         kwargs.pop("pass_type", None)
         kwargs.pop("t_idx", None)
         kwargs.pop("block_idx", None)
+        kwargs.pop("audio_start_timestep", None)
         return original(*args, **kwargs)
 
     model.forward = types.MethodType(forward, model)

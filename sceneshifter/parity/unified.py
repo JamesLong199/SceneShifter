@@ -126,10 +126,68 @@ def _encoder_device(pipeline: Any):
     return "cuda"
 
 
+def _unwrap_prompt_embed(out: Any) -> Any:
+    """DiffSynth encode_prompt returns ``{"context": tensor}``; Wan T5 returns a list."""
+    if isinstance(out, dict):
+        for key in ("context", "prompt_embeds", "encoder_hidden_states"):
+            if key in out:
+                return _unwrap_prompt_embed(out[key])
+        return out
+    if isinstance(out, (tuple, list)) and out:
+        return _unwrap_prompt_embed(out[0])
+    return out
+
+
+def _is_text_embed(value: Any) -> bool:
+    return hasattr(value, "shape") and hasattr(value, "dtype")
+
+
+def _commit_text_embeddings(router: Any, pipeline: Any, embeds: List[Any], *, source: str) -> None:
+    usable = [_unwrap_prompt_embed(item) for item in embeds]
+    if not usable or not all(_is_text_embed(item) for item in usable):
+        print(f"[parity-unified] skip non-tensor segment embeds from {source}", flush=True)
+        return
+    router.set_text_embeddings(usable)
+    from sceneshifter.adapters.base import attach_text_projector, project_router_text_embeddings
+
+    attach_text_projector(router, pipeline)
+    project_router_text_embeddings(router)
+    dims = [tuple(item.shape) if hasattr(item, "shape") else None for item in router.text_embeddings]
+    print(f"[parity-unified] encoded {len(usable)} segment prompts via {source} {dims}", flush=True)
+
+
+def _install_encode_prompt_hook(pipeline: Any, router: Any, routing: Dict[str, Any]) -> None:
+    """Capture official DiffSynth null context and encode segments after T5 is onloaded."""
+    original = getattr(pipeline, "encode_prompt", None)
+    if original is None or getattr(pipeline, "_ss_encode_prompt_hooked", False):
+        return
+    state = {"busy": False}
+
+    def wrapped(prompt, positive=True, *args, **kwargs):
+        out = original(prompt, positive=positive, *args, **kwargs)
+        if not positive:
+            router.null_text_embeddings = _unwrap_prompt_embed(out)
+            print("[parity-unified] captured official null prompt embed", flush=True)
+        elif not state["busy"] and getattr(router, "text_embeddings", None) is None:
+            prompts = routing.get("segment_prompts") or []
+            if prompts:
+                state["busy"] = True
+                try:
+                    embeds = [original(seg, positive=True) for seg in prompts]
+                    _commit_text_embeddings(router, pipeline, embeds, source="encode_prompt hook")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[parity-unified] encode_prompt hook skip: {exc}", flush=True)
+        return out
+
+    pipeline.encode_prompt = wrapped
+    pipeline._ss_encode_prompt_hooked = True
+
+
 def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, Any]) -> None:
     prompts = routing.get("segment_prompts") or []
     if not prompts or not hasattr(router, "set_text_embeddings"):
         return
+    _install_encode_prompt_hook(pipeline, router, routing)
     try:
         embeds = []
         device = _encoder_device(pipeline)
@@ -137,7 +195,7 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
             try:
                 for prompt in prompts:
                     out = pipeline.encode_prompt(prompt)
-                    embeds.append(out[0] if isinstance(out, (tuple, list)) else out)
+                    embeds.append(_unwrap_prompt_embed(out))
             except Exception as exc:  # noqa: BLE001
                 print(f"[parity-unified] encode_prompt skip: {exc}", flush=True)
                 embeds = []
@@ -148,22 +206,17 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
                     out = encoder([prompt], device)
                 except TypeError:
                     out = encoder([prompt])
-                embeds.append(out[0] if isinstance(out, (tuple, list)) else out)
+                embeds.append(_unwrap_prompt_embed(out))
             neg = getattr(pipeline, "sample_neg_prompt", None)
             if neg:
                 try:
                     null = encoder([neg], device)
                 except TypeError:
                     null = encoder([neg])
-                router.null_text_embeddings = null[0] if isinstance(null, (tuple, list)) else null
+                router.null_text_embeddings = _unwrap_prompt_embed(null)
         _capture_null_context(pipeline, router)
         if embeds:
-            router.set_text_embeddings(embeds)
-            from sceneshifter.adapters.base import attach_text_projector, project_router_text_embeddings
-
-            attach_text_projector(router, pipeline)
-            project_router_text_embeddings(router)
-            print(f"[parity-unified] encoded {len(embeds)} segment prompts", flush=True)
+            _commit_text_embeddings(router, pipeline, embeds, source="encode_prompt")
     except Exception as exc:  # noqa: BLE001
         print(f"[parity-unified] text embed skip: {exc}", flush=True)
 
@@ -208,6 +261,7 @@ class _TextEncoderProxy:
 
 
 def _capture_null_context(pipeline: Any, router: Any) -> None:
+    _install_encode_prompt_hook(pipeline, router, getattr(router, "config", {}) or {})
     encoder = getattr(pipeline, "text_encoder", None)
     if encoder is None or not callable(encoder) or getattr(encoder, "_ss_null_captured", False):
         return
@@ -396,7 +450,6 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
 
     unified = cfg["unified"]
     routing = _load_routing(cfg)
-    router = _create_router(cfg, routing)
     meta = _metadata(cfg)
     root = Path(cfg["dataset_root"])
     _push_path(official)
@@ -426,8 +479,6 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     )
     wav2vec_processor = Wav2Vec2Processor.from_pretrained(unified["wav2vec_model_dir"])
     wav2vec = Wav2Vec2Model.from_pretrained(unified["wav2vec_model_dir"]).to("cuda")
-    _inject(pipe.dit, router, "fantasytalking")
-    _maybe_set_text_embeddings(router, pipe, routing)
 
     image_path = _resolve_media(root, meta.get("cond_image"))
     audio = meta.get("cond_audio")
@@ -443,6 +494,14 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     torch.cuda.empty_cache()
     image = resize_image_by_longest_edge(image_path, int(unified.get("image_size", 768)))
     width, height = image.size
+    router = _create_router(cfg, routing, patch_h=max(1, height // 16), patch_w=max(1, width // 16))
+    print(
+        f"[parity-unified] fantasytalking router spatial={height}//16 x {width}//16 "
+        f"-> {height // 16}x{width // 16}",
+        flush=True,
+    )
+    _inject(pipe.dit, router, "fantasytalking")
+    _maybe_set_text_embeddings(router, pipe, routing)
     audio_proj_fea = fantasytalking.get_proj_fea(audio_wav2vec_fea)
     pos_idx_ranges = fantasytalking.split_audio_sequence(audio_proj_fea.size(1), num_frames=num_frames)
     audio_proj_split, audio_context_lens = fantasytalking.split_tensor_with_padding(
