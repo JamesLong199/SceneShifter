@@ -85,6 +85,96 @@ def test_record_single_prompt_t5_sets_segments_then_null():
     assert router.null_text_embeddings is store["neg"]
 
 
+def test_fantasy_cross_attn_keeps_full_sequence_for_audio():
+    from sceneshifter.adapters.base import wrap_cross_attention
+    from sceneshifter.adapters.fantasytalking import (
+        FantasyTalkingAdapter,
+        wrap_fantasy_i2v_processor,
+    )
+
+    cfg = canonical_config(num_frames=4, frame_splits=[2], segment_prompts=["a", "b"])
+    router = FramePromptRouter(cfg, backend="fantasytalking", patch_height=2, patch_width=2)
+    dim, heads, frames, spatial = 8, 2, 4, 4
+    router.set_text_embeddings([torch.randn(1, 3, dim), torch.randn(1, 3, dim)])
+
+    class Attn(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.num_heads = heads
+            self.head_dim = dim // heads
+            self.q = nn.Linear(dim, dim, bias=False)
+            self.k = nn.Linear(dim, dim, bias=False)
+            self.v = nn.Linear(dim, dim, bias=False)
+            self.o = nn.Linear(dim, dim, bias=False)
+            self.norm_q = nn.Identity()
+            self.norm_k = nn.Identity()
+            self.k_img = nn.Linear(dim, dim, bias=False)
+            self.v_img = nn.Linear(dim, dim, bias=False)
+            self.norm_k_img = nn.Identity()
+
+        def forward(self, x, context, *args, **kwargs):
+            return self.processor(
+                self,
+                x,
+                context,
+                None,
+                kwargs["audio_proj"],
+                None,
+                latents_num_frames=frames,
+                audio_scale=1.0,
+            )
+
+    class Processor(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.k_proj = nn.Linear(dim, dim, bias=False)
+            self.v_proj = nn.Linear(dim, dim, bias=False)
+
+        def __call__(
+            self,
+            attn,
+            x,
+            context,
+            context_lens,
+            audio_proj,
+            audio_context_lens,
+            latents_num_frames=4,
+            audio_scale=1.0,
+            **kwargs,
+        ):
+            b, n, d = x.size(0), attn.num_heads, attn.head_dim
+            q = attn.norm_q(attn.q(x)).view(b, -1, n, d)
+            audio_q = q.view(b * latents_num_frames, -1, n, d)
+            return attn.o(audio_q.reshape(b, q.size(1), -1))
+
+    attn = Attn()
+    attn.processor = Processor()
+    wrap_cross_attention(attn, router)
+    assert attn.forward.__func__ is Attn.forward
+
+    x = torch.randn(1, frames * spatial, dim)
+    context = torch.randn(1, 3, dim)
+    audio = torch.randn(1, frames, 2, dim)
+    wrap_fantasy_i2v_processor(attn.processor, router)
+    out = attn.processor(
+        attn,
+        x,
+        context,
+        None,
+        audio,
+        None,
+        latents_num_frames=frames,
+        audio_scale=1.0,
+    )
+    assert out.shape == x.shape
+
+    model = nn.Module()
+    model.cross_attn = attn
+    model.self_attn = nn.Identity()
+    bound = FantasyTalkingAdapter().inject(model, router)
+    assert any(getattr(m, "_ss_fantasy_cross_wrapped", False) for m in bound)
+
+
 def test_inject_finds_wan_animate_noise_model():
     class Wrapper:
         def __init__(self):

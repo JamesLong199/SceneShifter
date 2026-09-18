@@ -715,6 +715,11 @@ def wrap_self_attention(
 def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter]) -> nn.Module:
     original = module.forward
     module.frame_prompt_router = router
+    processor = getattr(module, "processor", None)
+    # FantasyTalking I2V audio views Q as ``[B*latent_frames, ...]``. Slicing x
+    # per scene makes that view invalid; the adapter wraps the processor instead.
+    if processor is not None and hasattr(processor, "k_proj"):
+        return module
 
     def forward(self, x, context=None, *args, **kwargs):
         active_router = getattr(self, "frame_prompt_router", None)
