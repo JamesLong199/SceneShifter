@@ -28,6 +28,7 @@
     "official_root": "third_party/hunyuanvideo-avatar",
     "official_script": "hymm_sp/sample_gpu_poor.py",
     "model_base": "/mnt/whuscs/ljz/HunyuanVideo-Avatar/weights",
+    "ckpt": "/mnt/whuscs/ljz/HunyuanVideo-Avatar/weights/ckpts/hunyuan-video-t2v-720p/transformers/mp_rank_00_model_states_fp8.pt",
     "base_seed": 43,
     "infer_steps": 50,
     "cfg_scale": 7.5,

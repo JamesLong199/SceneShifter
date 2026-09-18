@@ -555,8 +555,15 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     save_dir = out_dir / "videos"
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    ckpt = unified.get("ckpt") or os.path.join(
+        unified["model_base"],
+        "ckpts",
+        "hunyuan-video-t2v-720p",
+        "transformers",
+        "mp_rank_00_model_states_fp8.pt",
+    )
     argv = [
-        "--ckpt", os.path.join(unified["model_base"], "ckpts"),
+        "--ckpt", ckpt,
         "--sample-n-frames", "129",
         "--seed", str(unified.get("base_seed", 43)),
         "--image-size", "704",
