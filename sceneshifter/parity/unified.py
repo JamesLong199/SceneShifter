@@ -601,6 +601,7 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     os.chdir(official)
     os.environ["MODEL_BASE"] = str(unified["model_base"])
     os.environ["DISABLE_SP"] = "1"
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     from hymm_sp.config import add_extra_args, sanity_check_args  # type: ignore
     from hymm_sp.data_kits.audio_dataset import VideoAudioTextLoaderVal  # type: ignore
     from hymm_sp.data_kits.face_align import AlignImage  # type: ignore
@@ -677,6 +678,7 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     )
     batch = next(iter(DataLoader(dataset, batch_size=1, shuffle=False)))
     model_args.seed = int(unified.get("base_seed", 43))
+    torch.cuda.empty_cache()
     samples = sampler.predict(model_args, batch, wav2vec, feature_extractor, align_instance)
     sample = samples["samples"][0]
     frame_count = min(int(batch["audio_len"][0]), sample.shape[1])
