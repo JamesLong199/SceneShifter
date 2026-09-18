@@ -897,7 +897,18 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
             except TypeError:
                 piece = original(x[:, sl], text)
             outs.append(piece)
-        return torch.cat(outs, dim=1)
+        out = torch.cat(outs, dim=1)
+        video = int(active_router.num_frames) * int(active_router.spatial_tokens)
+        extra = max(0, int(x.shape[1]) - video)
+        if extra > 0:
+            try:
+                tail = original(x[:, video:], context, *args, **kwargs)
+            except TypeError:
+                tail = original(x[:, video:], context)
+            out = torch.cat([out, tail], dim=1)
+        if int(out.shape[1]) != int(x.shape[1]):
+            return original(x, context, *args, **kwargs)
+        return out
 
     module.forward = types.MethodType(forward, module)
     return module

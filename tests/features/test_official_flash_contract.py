@@ -306,3 +306,27 @@ def test_talking_i2v_uncond_keeps_official_neg_context():
     # Official disables cross-attn routing on uncond; keep generate's neg prompt.
     assert captured["context_lens"] is None
     assert captured["context"] is official
+
+
+def test_cross_attn_keeps_s2v_extra_tokens():
+    cfg = canonical_config()
+    cfg["segment_prompt_start_timestep"] = 0
+    router = FramePromptRouter(cfg, backend="wan_s2v", patch_height=2, patch_width=2)
+    text = torch.randn(1, 4, 8)
+    router.set_text_embeddings([text, text])
+    captured = []
+
+    class Cross(nn.Module):
+        def forward(self, x, context, context_lens=None):
+            captured.append(int(x.shape[1]))
+            return x
+
+    module = Cross()
+    wrap_cross_attention(module, router)
+    module._ss_timestep = 3
+    module._ss_pass = "cond"
+    x = torch.randn(1, 34, 8)
+    context = torch.cat([torch.randn(1, 257, 8), text], dim=1)
+    out = module(x, context)
+    assert out.shape[1] == 34
+    assert captured[-1] == 2
