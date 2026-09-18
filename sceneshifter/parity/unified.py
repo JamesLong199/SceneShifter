@@ -156,19 +156,29 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
         print(f"[parity-unified] text embed skip: {exc}", flush=True)
 
 
+class _TextEncoderProxy:
+    """Preserve T5EncoderModel.model while capturing the official null prompt."""
+
+    def __init__(self, inner: Any, router: Any):
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "_router", router)
+        object.__setattr__(self, "_ss_null_captured", True)
+
+    def __call__(self, texts, *args, **kwargs):
+        out = self._inner(texts, *args, **kwargs)
+        if isinstance(texts, (list, tuple)) and len(texts) >= 2 and isinstance(out, (list, tuple)):
+            self._router.null_text_embeddings = out[1]
+        return out
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+
 def _capture_null_context(pipeline: Any, router: Any) -> None:
     encoder = getattr(pipeline, "text_encoder", None)
     if encoder is None or not callable(encoder) or getattr(encoder, "_ss_null_captured", False):
         return
-
-    def wrapped(texts, *args, **kwargs):
-        out = encoder(texts, *args, **kwargs)
-        if isinstance(texts, (list, tuple)) and len(texts) >= 2 and isinstance(out, (list, tuple)):
-            router.null_text_embeddings = out[1]
-        return out
-
-    wrapped._ss_null_captured = True  # type: ignore[attr-defined]
-    pipeline.text_encoder = wrapped
+    pipeline.text_encoder = _TextEncoderProxy(encoder, router)
 
 
 def _wrap_named_classes(mod: Any, names: List[str], router: Any, adapter: str) -> None:
