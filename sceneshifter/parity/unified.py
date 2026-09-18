@@ -909,6 +909,9 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
         cfg, routing, patch_h=max(1, int(sample_size[0]) // 16), patch_w=max(1, int(sample_size[1]) // 16)
     )
     _inject(pipeline.transformer, router, "wan_fun_camera")
+    from sceneshifter.adapters.base import attach_text_projector
+
+    attach_text_projector(router, pipeline.transformer)
     _maybe_set_text_embeddings(router, pipeline, routing)
 
     image = _resolve_media(root, meta.get("cond_image"))
@@ -918,17 +921,18 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     video_length = int(unified.get("video_length", 81))
     control = process_pose_file(camera_txt, sample_size[1], sample_size[0])
     control = control[:video_length].permute([3, 0, 1, 2]).unsqueeze(0)
+    # Official 092: VAE start uses resize_mode=centercrop; CLIP gets the raw cond image.
     cropped = _fun_center_crop_pil(image, sample_size)
     start = get_image_latent(cropped, sample_size=sample_size)
-    clip_image = cropped
+    clip_image = Image.open(image).convert("RGB")
     generator = torch.Generator(device="cuda").manual_seed(int(unified.get("seed", 43)))
-    prompts = routing.get("segment_prompts") or [meta.get("prompt") or ""]
+    prompt = meta.get("prompt") or (routing.get("segment_prompts") or [""])[0]
     negative = unified.get(
         "negative_prompt",
         "Twisted body, limb deformities, text captions, comic, static, ugly, error, messy code, blurry, low quality, watermark, subtitles.",
     )
     video = pipeline(
-        prompts[0],
+        prompt,
         num_frames=video_length,
         negative_prompt=negative,
         height=sample_size[0],

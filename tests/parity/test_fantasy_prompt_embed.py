@@ -270,6 +270,18 @@ def test_allow_missing_flex_attention_is_safe():
     assert callable(flex_attention)
 
 
+def test_fun_clip_image_uses_uncropped_cond():
+    import inspect
+
+    from sceneshifter.parity import unified
+
+    src = inspect.getsource(unified.run_fun_official)
+    assert "clip_image = cropped" not in src
+    assert 'Image.open(image).convert("RGB")' in src
+    assert "attach_text_projector(router, pipeline.transformer)" in src
+    assert 'meta.get("prompt")' in src
+
+
 def test_inject_finds_wan_animate_noise_model():
     class Wrapper:
         def __init__(self):
