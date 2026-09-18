@@ -712,6 +712,34 @@ def wrap_self_attention(
     return module
 
 
+def _drop_packed_context_lens(args: Tuple[Any, ...], kwargs: Dict[str, Any]):
+    """Official SceneShifter text flash uses k_lens=None, not generate's packed length."""
+    kwargs = dict(kwargs)
+    kwargs.pop("context_lens", None)
+    if args:
+        return (None,) + tuple(args[1:]), kwargs
+    kwargs["context_lens"] = None
+    return args, kwargs
+
+
+def _clip_plus_text(context: torch.Tensor, text: torch.Tensor) -> Optional[torch.Tensor]:
+    """Rebuild official I2V context: CLIP 257 + projected T5."""
+    if text.ndim == context.ndim - 1:
+        text = text.unsqueeze(0)
+    if (
+        text.ndim != context.ndim
+        or text.shape[0] != context.shape[0]
+        or text.shape[-1] != context.shape[-1]
+    ):
+        return None
+    if context.shape[1] > text.shape[1]:
+        prefix = context[:, : int(context.shape[1] - text.shape[1])]
+        return torch.cat([prefix, text.to(device=context.device, dtype=context.dtype)], dim=1)
+    if tuple(text.shape) == tuple(context.shape):
+        return text
+    return None
+
+
 def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter]) -> nn.Module:
     original = module.forward
     module.frame_prompt_router = router
@@ -731,31 +759,29 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
                 return original(x, *args, **kwargs)
             return original(x, context, *args, **kwargs)
         project_router_text_embeddings(active_router)
-        if not active_router.should_use_segment_prompts(int(timestep_idx), str(pass_type)):
+        talking = getattr(active_router, "backend", "") in {"multitalk", "infinitetalk"}
+        # Official MultiTalk/InfiniteTalk route text on timestep only (both CFG passes)
+        # and never pack T5 with generate's context_lens.
+        text_pass = "cond" if talking else str(pass_type)
+        if talking:
+            args, kwargs = _drop_packed_context_lens(args, kwargs)
+        if not active_router.should_use_segment_prompts(int(timestep_idx), text_pass):
+            if talking and active_router.text_embeddings:
+                shared = _clip_plus_text(context, active_router.text_embeddings[0])
+                if shared is not None:
+                    context = shared
             return original(x, context, *args, **kwargs)
         outs = []
         for segment in range(active_router.num_segments):
             start, end = active_router.segment_bounds[segment]
-            embed_idx = active_router.selected_text_index(int(timestep_idx), segment, str(pass_type))
+            embed_idx = active_router.selected_text_index(int(timestep_idx), segment, text_pass)
             if embed_idx is None:
                 return original(x, context, *args, **kwargs)
             text = active_router.text_embeddings[embed_idx]
             if not torch.is_tensor(text) or not torch.is_tensor(context):
                 return original(x, context, *args, **kwargs)
-            if text.ndim == context.ndim - 1:
-                text = text.unsqueeze(0)
-            if (
-                text.ndim != context.ndim
-                or text.shape[0] != context.shape[0]
-                or text.shape[-1] != context.shape[-1]
-            ):
-                return original(x, context, *args, **kwargs)
-            if context.shape[1] > text.shape[1]:
-                prefix = context[:, : int(context.shape[1] - text.shape[1])]
-                text = torch.cat(
-                    [prefix, text.to(device=context.device, dtype=context.dtype)], dim=1
-                )
-            elif tuple(text.shape) != tuple(context.shape):
+            text = _clip_plus_text(context, text)
+            if text is None:
                 return original(x, context, *args, **kwargs)
             sl = slice(start * active_router.spatial_tokens, end * active_router.spatial_tokens)
             try:

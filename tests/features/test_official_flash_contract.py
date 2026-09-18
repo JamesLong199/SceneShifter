@@ -5,6 +5,7 @@ from sceneshifter.adapters.base import (
     project_router_text_embeddings,
     scene_masked_official_flash,
     wrap_audio_attention,
+    wrap_cross_attention,
 )
 from sceneshifter.router import FramePromptRouter
 from tests.conftest import canonical_config
@@ -152,3 +153,32 @@ def test_unrestricted_collects_ref_loc_without_updating_mask():
     assert captured["k_lens"] is k_lens
     assert router.live_bg is None
     assert (0, 0, 0) in router._ref_loc_scores
+
+
+def test_talking_i2v_drops_context_lens_and_uses_shared_embed_on_uncond():
+    cfg = canonical_config()
+    cfg["segment_prompt_start_timestep"] = 3
+    router = FramePromptRouter(cfg, backend="multitalk", patch_height=2, patch_width=2)
+    clip = torch.randn(1, 257, 8)
+    shared = torch.randn(1, 4, 8)
+    router.set_text_embeddings([shared, torch.randn(1, 4, 8)])
+    captured = {}
+
+    class I2V(nn.Module):
+        def forward(self, x, context, context_lens=None):
+            captured["context"] = context
+            captured["context_lens"] = context_lens
+            return x
+
+    module = I2V()
+    wrap_cross_attention(module, router)
+    module._ss_timestep = 0
+    module._ss_pass = "uncond"
+    x = torch.randn(1, 8, 8)
+    official = torch.cat([clip, torch.randn(1, 4, 8)], dim=1)
+    out = module(x, official, torch.tensor([3]))
+    assert out is x
+    assert captured["context_lens"] is None
+    assert captured["context"].shape[1] == 261
+    assert torch.equal(captured["context"][:, :257], clip)
+    assert torch.equal(captured["context"][:, 257:], shared)
