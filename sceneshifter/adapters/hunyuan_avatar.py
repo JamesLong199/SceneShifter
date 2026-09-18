@@ -30,21 +30,30 @@ def _empty(device: torch.device) -> torch.Tensor:
     return torch.empty(0, dtype=torch.long, device=device)
 
 
+def _resize_frame_mask(mask: torch.Tensor, frames: int, spatial: int) -> torch.Tensor:
+    value = mask.to(dtype=torch.float32)
+    if value.numel() == frames * spatial:
+        return value.reshape(frames, spatial) > 0.5
+    old_spatial = value.numel() // max(frames, 1)
+    if old_spatial <= 0 or old_spatial * frames != value.numel():
+        raise ValueError(f"cannot reshape mask of {tuple(mask.shape)} to [{frames}, {spatial}]")
+    src = value.reshape(frames, 1, old_spatial)
+    return torch.nn.functional.interpolate(src, size=spatial, mode="nearest").reshape(frames, spatial) > 0.5
+
+
 def _fg_maps(router: FramePromptRouter, device: torch.device, frames: int, spatial: int):
     live = router.live_subject_fg
     if live is not None:
-        video_fg = live.any(0).to(device=device).reshape(frames, spatial)
-        ref_fg = video_fg[0]
-        return ref_fg, video_fg
+        video_fg = _resize_frame_mask(live.any(0).to(device=device), frames, spatial)
+        return video_fg[0], video_fg
     if router.subject_fg_masks is not None:
-        video_fg = router.subject_fg_masks.any(0).to(device=device).reshape(frames, spatial)
-        ref_fg = video_fg[0]
-        return ref_fg, video_fg
+        video_fg = _resize_frame_mask(router.subject_fg_masks.any(0).to(device=device), frames, spatial)
+        return video_fg[0], video_fg
     bg = router.background_mask(device)
     if bg is None:
         ones = torch.ones(spatial, dtype=torch.bool, device=device)
         return ones, ones[None].expand(frames, -1)
-    video_fg = (~bg.to(device=device)).reshape(frames, spatial)
+    video_fg = _resize_frame_mask((~bg.to(device=device)), frames, spatial)
     return video_fg[0], video_fg
 
 
@@ -307,9 +316,12 @@ def hunyuan_scene_varlen(
     if img_len != expected:
         spatial = img_len // (router.num_frames + 1)
         if spatial > 0 and spatial * (router.num_frames + 1) == img_len:
+            old = int(router.spatial_tokens)
             router.spatial_tokens = spatial
             router.patch_height = spatial
             router.patch_width = 1
+            if router.static_bg is not None and router.static_bg.shape[-1] == old:
+                router.static_bg = _resize_frame_mask(router.static_bg, router.num_frames, spatial)
         else:
             print(
                 f"[hunyuan-adapter] img_len={img_len} != ref+video={expected}; official flash",
