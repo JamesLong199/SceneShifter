@@ -7,10 +7,12 @@ import sys
 import types
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 
 from ..layouts import HunyuanMMDiTLayout
+from ..ref_attn import live_bg_from_subject_fg
 from ..router import FramePromptRouter
 from .base import (
     Adapter,
@@ -76,6 +78,8 @@ def apply_hunyuan_official_masks(router: FramePromptRouter) -> None:
     stacked = torch.stack(subjects, dim=0)
     frames = int(router.num_frames)
     router.subject_fg_masks = stacked[:, None].expand(-1, frames, -1).contiguous()
+    # Official fg_spatial is cover-crop(union), not the union of cover-cropped subjects.
+    router.hy_fg_spatial = union_lat.contiguous()
     router.static_bg = (~union_lat)[None].expand(frames, -1).contiguous()
     router.live_bg = None
     router.live_subject_fg = None
@@ -86,20 +90,36 @@ def apply_hunyuan_official_masks(router: FramePromptRouter) -> None:
     )
 
 
-def _fg_maps(router: FramePromptRouter, device: torch.device, frames: int, spatial: int):
-    live = router.live_subject_fg
-    if live is not None:
-        video_fg = _resize_frame_mask(live.any(0).to(device=device), frames, spatial)
-        return video_fg[0], video_fg
+def _static_ref_fg(router: FramePromptRouter, device: torch.device, spatial: int) -> torch.Tensor:
+    """Official ``fg_spatial``: static cover-crop(union), never the live frame-0 mask."""
+    stored = getattr(router, "hy_fg_spatial", None)
+    if stored is not None:
+        return _resize_frame_mask(stored.to(device=device), 1, spatial)[0]
+    static_bg = getattr(router, "static_bg", None)
+    if static_bg is not None:
+        return _resize_frame_mask((~static_bg.to(device=device)), 1, spatial)[0]
     if router.subject_fg_masks is not None:
-        video_fg = _resize_frame_mask(router.subject_fg_masks.any(0).to(device=device), frames, spatial)
-        return video_fg[0], video_fg
-    bg = router.background_mask(device)
-    if bg is None:
-        ones = torch.ones(spatial, dtype=torch.bool, device=device)
-        return ones, ones[None].expand(frames, -1)
-    video_fg = _resize_frame_mask((~bg.to(device=device)), frames, spatial)
-    return video_fg[0], video_fg
+        return _resize_frame_mask(router.subject_fg_masks.any(0).to(device=device), 1, spatial)[0]
+    return torch.ones(spatial, dtype=torch.bool, device=device)
+
+
+def _fg_maps(
+    router: FramePromptRouter,
+    device: torch.device,
+    frames: int,
+    spatial: int,
+    block: Optional[Dict[str, Any]] = None,
+):
+    ref_fg = _static_ref_fg(router, device, spatial)
+    use_live = (
+        block is not None
+        and str((block.get("params") or {}).get("mask_type", "")) == "ref_attn"
+        and router.live_subject_fg is not None
+    )
+    if use_live:
+        video_fg = _resize_frame_mask(router.live_subject_fg.any(0).to(device=device), frames, spatial)
+        return ref_fg, video_fg
+    return ref_fg, ref_fg[None].expand(frames, -1).contiguous()
 
 
 def build_hunyuan_groups(
@@ -123,7 +143,7 @@ def build_hunyuan_groups(
         )
     ref_len = layout.ref_length
     tokens_per_frame = layout.spatial_tokens
-    ref_fg, video_fg = _fg_maps(router, device, layout.video_frames, tokens_per_frame)
+    ref_fg, video_fg = _fg_maps(router, device, layout.video_frames, tokens_per_frame, block)
     ref_fg_idx = torch.nonzero(ref_fg, as_tuple=False).flatten()
     ref_bg_idx = torch.nonzero(~ref_fg, as_tuple=False).flatten()
     full_idx = torch.arange(tokens_per_frame, device=device)
@@ -236,7 +256,14 @@ def build_hunyuan_groups(
                 ]
             else:
                 frame_splits = [(seg_frames, None)]
-            region_rows = row.items() if isinstance(row, dict) else [("all", row)]
+            if isinstance(row, dict):
+                # Official `_normalize_row`: identical fg/bg rows collapse to "all".
+                if row.get("fg") == row.get("bg"):
+                    region_rows = [("all", row["fg"])]
+                else:
+                    region_rows = row.items()
+            else:
+                region_rows = [("all", row)]
             for region_key, entries in region_rows:
                 q_region = "full" if region_key == "all" else region_key
                 for frames, upgrade_window in frame_splits:
@@ -278,6 +305,106 @@ def build_hunyuan_groups(
     return groups
 
 
+def _remove_small_components_official(mask: np.ndarray, min_size: int) -> np.ndarray:
+    if min_size <= 1:
+        return mask
+    mask = mask.astype(np.uint8, copy=False)
+    height, width = mask.shape
+    seen = np.zeros_like(mask, dtype=np.uint8)
+    result = np.zeros_like(mask, dtype=np.uint8)
+    for y0 in range(height):
+        for x0 in range(width):
+            if mask[y0, x0] == 0 or seen[y0, x0]:
+                continue
+            stack = [(y0, x0)]
+            seen[y0, x0] = 1
+            component = []
+            while stack:
+                y, x = stack.pop()
+                component.append((y, x))
+                for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                    if 0 <= ny < height and 0 <= nx < width and mask[ny, nx] and not seen[ny, nx]:
+                        seen[ny, nx] = 1
+                        stack.append((ny, nx))
+            if len(component) >= min_size:
+                for y, x in component:
+                    result[y, x] = 1
+    return result
+
+
+def _fill_small_holes_official(mask: np.ndarray, max_size: int) -> np.ndarray:
+    if max_size <= 0:
+        return mask
+    inverse = (1 - mask.astype(np.uint8, copy=False))
+    height, width = inverse.shape
+    seen = np.zeros_like(inverse, dtype=np.uint8)
+    result = mask.astype(np.uint8, copy=True)
+    for y0 in range(height):
+        for x0 in range(width):
+            if inverse[y0, x0] == 0 or seen[y0, x0]:
+                continue
+            stack = [(y0, x0)]
+            seen[y0, x0] = 1
+            component = []
+            touches_edge = False
+            while stack:
+                y, x = stack.pop()
+                component.append((y, x))
+                touches_edge |= y in (0, height - 1) or x in (0, width - 1)
+                for ny, nx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+                    if 0 <= ny < height and 0 <= nx < width and inverse[ny, nx] and not seen[ny, nx]:
+                        seen[ny, nx] = 1
+                        stack.append((ny, nx))
+            if not touches_edge and len(component) <= max_size:
+                for y, x in component:
+                    result[y, x] = 1
+    return result
+
+
+def _derive_subject_fg_masks_official(
+    fg_scores: np.ndarray,
+    bg_scores: np.ndarray,
+    spatial_hw: tuple[int, int],
+    drop_low_percent: float,
+    min_component_size: int,
+    hole_size: int,
+) -> np.ndarray:
+    """Official Hunyuan ``derive_subject_fg_masks`` (np.percentile + argmax)."""
+    fg = np.asarray(fg_scores, dtype=np.float32)
+    bg = np.asarray(bg_scores, dtype=np.float32)
+    if fg.ndim == 2:
+        fg = fg[:, None, :]
+    if bg.ndim == 1:
+        bg = bg[None, :]
+    spatial_h, spatial_w = int(spatial_hw[0]), int(spatial_hw[1])
+    num_subjects, num_frames, spatial = fg.shape
+    output = np.zeros((num_subjects, num_frames, spatial), dtype=np.float32)
+    drop = min(max(float(drop_low_percent), 0.0), 100.0)
+    for frame in range(num_frames):
+        classes = np.concatenate([fg[:, frame], bg[None, frame]], axis=0)
+        labels = np.argmax(classes, axis=0)
+        sorted_scores = np.sort(classes, axis=0)
+        confidence = sorted_scores[-1] - sorted_scores[-2]
+        proposed = np.zeros((num_subjects, spatial_h, spatial_w), dtype=np.uint8)
+        for subject in range(num_subjects):
+            selected = labels == subject
+            if drop > 0 and np.any(selected):
+                threshold = np.percentile(confidence[selected], drop)
+                selected &= confidence > threshold
+            mask = selected.reshape(spatial_h, spatial_w).astype(np.uint8)
+            mask = _remove_small_components_official(mask, int(min_component_size))
+            mask = _fill_small_holes_official(mask, int(hole_size))
+            proposed[subject] = mask
+        overlap = proposed.sum(axis=0)
+        if np.any(overlap > 1):
+            winners = np.argmax(fg[:, frame].reshape(num_subjects, spatial_h, spatial_w), axis=0)
+            for y, x in zip(*np.where(overlap > 1)):
+                proposed[:, y, x] = 0
+                proposed[int(winners[y, x]), y, x] = 1
+        output[:, frame] = proposed.reshape(num_subjects, -1)
+    return output
+
+
 def _maybe_update_live_mask(
     router: FramePromptRouter,
     q_row: torch.Tensor,
@@ -310,7 +437,9 @@ def _maybe_update_live_mask(
         subject = torch.nn.functional.interpolate(
             subject.unsqueeze(1), size=int(ref_k.shape[1]), mode="nearest"
         ).squeeze(1)
-    background = (~subject.any(0)).float().unsqueeze(0)
+    # Official `_reference_target_masks`: BG is ~cover-crop(union), not ~union(subjects).
+    static_fg = _static_ref_fg(router, q_row.device, int(subject.shape[-1]))
+    background = (~static_fg).to(device=q_row.device, dtype=torch.float32).unsqueeze(0)
     targets = torch.cat([subject, background], dim=0)
     head = params.get("ref_attn_mask_head")
     heads = list(range(video_q.shape[2])) if head is None else [int(head)]
@@ -337,14 +466,19 @@ def _maybe_update_live_mask(
     frames = int(router.num_frames)
     if int(live.shape[-1]) != frames * spatial:
         return
-    # Official derive_subject_fg_masks: per-subject FG vs BG argmax, not mean FG.
-    router.update_live_mask_from_class_scores(
-        live[:num_subjects].view(num_subjects, frames, spatial),
-        live[num_subjects].view(frames, spatial),
-        drop_low_percent=float(params.get("ref_attn_mask_drop_low_percent", 10.0)),
-        min_component_size=int(params.get("ref_attn_mask_min_component_size", 20)),
-        hole_size=int(params.get("ref_attn_mask_hole_size", 0)),
+    if bool(getattr(router, "freeze_live_mask", False)) and router.live_bg is not None:
+        return
+    subject_masks = _derive_subject_fg_masks_official(
+        live[:num_subjects].detach().float().cpu().numpy().reshape(num_subjects, frames, spatial),
+        live[num_subjects].detach().float().cpu().numpy().reshape(frames, spatial),
+        (int(router.patch_height), int(router.patch_width)),
+        float(params.get("ref_attn_mask_drop_low_percent", 10.0)),
+        int(params.get("ref_attn_mask_min_component_size", 20)),
+        int(params.get("ref_attn_mask_hole_size", 0)),
     )
+    live_fg = torch.from_numpy(subject_masks > 0.5)
+    router.live_subject_fg = live_fg
+    router.live_bg = live_bg_from_subject_fg(live_fg)
 
 
 def hunyuan_scene_varlen(

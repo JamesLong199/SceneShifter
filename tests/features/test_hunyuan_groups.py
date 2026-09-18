@@ -3,6 +3,7 @@ import torch
 from sceneshifter.adapters.hunyuan_avatar import (
     apply_hunyuan_official_masks,
     build_hunyuan_groups,
+    _fg_maps,
     _resize_center_crop_mask,
 )
 from sceneshifter.layouts import HunyuanMMDiTLayout
@@ -75,3 +76,28 @@ def test_hunyuan_official_masks_use_cover_crop(tmp_path):
     assert tuple(router.subject_fg_masks.shape) == (1, 8, 6)
     assert bool(router.subject_fg_masks[0, 0, 0])
     assert not bool(router.subject_fg_masks[0, 0, 1])
+    assert getattr(router, "hy_fg_spatial", None) is not None
+    assert int(router.hy_fg_spatial.sum()) == 2
+
+
+def test_hunyuan_ref_fg_stays_static_after_live(tmp_path):
+    import numpy as np
+
+    mask = np.ones((16, 24), dtype=np.float32)
+    mask[:, :8] = 0.0
+    path = tmp_path / "sub0.npy"
+    np.save(path, mask)
+    cfg = canonical_config(background_mask_path={"0": str(path)})
+    cfg["attention_control_schedule"][0]["params"]["mask_type"] = "ref_attn"
+    router = FramePromptRouter(cfg, backend="hunyuan_avatar", patch_height=2, patch_width=3)
+    apply_hunyuan_official_masks(router)
+    static = router.hy_fg_spatial.clone()
+    live = torch.zeros_like(router.subject_fg_masks)
+    live[..., 5] = True
+    router.live_subject_fg = live
+    router.live_bg = ~live.any(0)
+    block = router.active_block(0, 0, "cond")
+    ref_fg, video_fg = _fg_maps(router, torch.device("cpu"), router.num_frames, 6, block)
+    assert torch.equal(ref_fg.cpu(), static.cpu())
+    assert bool(video_fg[0, 5])
+    assert not bool(ref_fg[5])
