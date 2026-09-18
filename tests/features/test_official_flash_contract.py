@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from sceneshifter.adapters.base import (
+    _grid_fhw,
     _ref_loc_query_for_scene_mask,
     project_router_text_embeddings,
     scene_masked_official_flash,
@@ -14,6 +15,14 @@ from tests.conftest import canonical_config
 
 class _Attn(nn.Module):
     pass
+
+
+def test_grid_fhw_flattens_s2v_nonscalar_row():
+    router = FramePromptRouter(canonical_config(), patch_height=2, patch_width=2)
+    # int(row[0]) raises when each axis is a multi-element tensor.
+    grid = [torch.tensor([[21, 44, 64], [21, 44, 64]])]
+    assert _grid_fhw(grid, router) == (21, 44, 64)
+    assert _grid_fhw(torch.tensor([[8, 2, 2]]), router) == (8, 2, 2)
 
 
 def test_unrestricted_flash_keeps_k_lens():

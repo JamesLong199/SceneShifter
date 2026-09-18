@@ -168,6 +168,32 @@ def _extract_qkv(args: Tuple[Any, ...], kwargs: Dict[str, Any]):
     return q, k, v, used_kw
 
 
+def _as_int(value: Any) -> int:
+    if torch.is_tensor(value):
+        flat = value.detach().reshape(-1)
+        if flat.numel() == 0:
+            raise ValueError("empty tensor")
+        return int(flat[0].item())
+    if isinstance(value, (list, tuple)):
+        return _as_int(value[0])
+    return int(value)
+
+
+def _grid_fhw(grid: Any, router: FramePromptRouter) -> Tuple[int, int, int]:
+    """S2V grid_sizes[0] can be a non-scalar tensor; flatten to (F, H, W)."""
+    fallback = (int(router.num_frames), int(router.patch_height), int(router.patch_width))
+    if grid is None:
+        return fallback
+    try:
+        row = grid[0]
+        if torch.is_tensor(row) and int(row.numel()) >= 3:
+            flat = row.detach().reshape(-1)
+            return int(flat[0].item()), int(flat[1].item()), int(flat[2].item())
+        return (_as_int(row[0]), _as_int(row[1]), _as_int(row[2]))
+    except Exception:
+        return fallback
+
+
 def _projector_dims(module: nn.Module) -> Tuple[Optional[int], Optional[int]]:
     linears = [m for m in module.modules() if isinstance(m, nn.Linear)]
     if not linears:
@@ -475,11 +501,7 @@ def _collect_live_ref_attn(
     if targets is None:
         return
     grid = getattr(module, "_ss_grid_sizes", None)
-    if grid is not None:
-        row = grid[0]
-        shape = (int(row[0]), int(row[1]), int(row[2]))
-    else:
-        shape = (int(router.num_frames), int(router.patch_height), int(router.patch_width))
+    shape = _grid_fhw(grid, router)
     num_subjects = int(targets.shape[0] - 1)
     # One head at a time: a full 40-head map is ~7GB and OOMs next to the 14B DiT.
     for head in wanted_heads:
