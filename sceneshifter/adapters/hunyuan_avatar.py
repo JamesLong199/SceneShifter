@@ -18,7 +18,8 @@ class HunyuanAvatarAdapter(Adapter):
         )
         if not self_mods and hasattr(model, "named_modules"):
             for _, module in model.named_modules():
-                if hasattr(module, "Wqkv") or hasattr(module, "q"):
+                name = type(module).__name__
+                if name in {"SelfAttentionLayer", "BasicAttentionLayer"} or hasattr(module, "Wqkv"):
                     self_mods.append(module)
         bound = []
         for module in self_mods:

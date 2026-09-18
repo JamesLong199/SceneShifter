@@ -309,7 +309,9 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     pipe = WanVideoPipeline.from_model_manager(model_manager, torch_dtype=torch.bfloat16, device="cuda")
     fantasytalking = FantasyTalkingAudioConditionModel(pipe.dit, 768, 2048).to("cuda")
     fantasytalking.load_audio_processor(unified["fantasytalking_model_path"], pipe.dit)
-    pipe.enable_vram_management(num_persistent_param_in_dit=None)
+    pipe.enable_vram_management(
+        num_persistent_param_in_dit=int(unified.get("num_persistent_param_in_dit", 0) or 0)
+    )
     wav2vec_processor = Wav2Vec2Processor.from_pretrained(unified["wav2vec_model_dir"])
     wav2vec = Wav2Vec2Model.from_pretrained(unified["wav2vec_model_dir"]).to("cuda")
     _inject(pipe.dit, router, "fantasytalking")
@@ -578,7 +580,7 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     model_args = sanity_check_args(parser.parse_args(argv))
     device = torch.device("cuda")
     sampler = HunyuanVideoSampler.from_pretrained(model_args.ckpt, args=model_args, device=device)
-    _inject(sampler.pipeline.transformer, router, "hunyuan_avatar")
+    _inject(sampler, router, "hunyuan_avatar")
     _maybe_set_text_embeddings(router, sampler, routing)
 
     whisper_path = os.path.join(unified["model_base"], "ckpts", "whisper-tiny")
