@@ -786,8 +786,12 @@ def _install_fantasy_audio_cfg_gate(dit: Any, audio_start: int) -> None:
             state["calls"] = 0
             state["posi"] = None
         state["calls"] += 1
+        gated = int(state["step"]) < int(audio_start)
+        if gated:
+            kwargs = dict(kwargs)
+            kwargs["audio_scale"] = 0.0
         if (
-            int(state["step"]) < int(audio_start)
+            gated
             and state["calls"] == 2
             and state["posi"] is not None
         ):

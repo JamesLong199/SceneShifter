@@ -277,19 +277,23 @@ def test_fantasy_audio_cfg_gate_reuses_posi_before_start():
         def __init__(self):
             super().__init__()
             self.n = 0
+            self.audio_scales = []
 
         def forward(self, x, timestep=0.0, **kwargs):
             self.n += 1
+            self.audio_scales.append(kwargs.get("audio_scale"))
             return x + self.n
 
     model = Dummy()
     _install_fantasy_audio_cfg_gate(model, audio_start=2)
-    first = model(torch.zeros(1), timestep=9.0)
-    second = model(torch.ones(1), timestep=9.0)
-    third = model(torch.zeros(1), timestep=8.0)
+    first = model(torch.zeros(1), timestep=9.0, audio_scale=1.0)
+    second = model(torch.ones(1), timestep=9.0, audio_scale=1.0)
+    third = model(torch.zeros(1), timestep=8.0, audio_scale=1.0)
+    model(torch.zeros(1), timestep=7.0, audio_scale=1.0)
     assert torch.equal(first, second)
-    assert model.n == 2
+    assert model.n == 3
     assert not torch.equal(third, first)
+    assert model.audio_scales == [0.0, 0.0, 1.0]
 
 
 def test_talking_audio_override_survives_disabled_router():
