@@ -696,7 +696,6 @@ def _collect_live_ref_attn(
         valid_heads.append(int(head))
     per_head_backends = {
         "wan_s2v",
-        "wan_fun_camera",
     }
     backend = getattr(router, "backend", None)
     individual_scores = None
