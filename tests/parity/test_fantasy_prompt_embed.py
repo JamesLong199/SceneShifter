@@ -127,6 +127,38 @@ def test_record_single_prompt_t5_sets_segments_then_null():
     assert router.null_text_embeddings is store["neg"]
 
 
+def test_s2v_records_segments_in_one_batch_and_replaces_baseline():
+    from sceneshifter.parity.unified import _record_official_text_encode
+
+    cfg = canonical_config()
+    router = FramePromptRouter(cfg, backend="wan_s2v", patch_height=2, patch_width=2)
+    store = {
+        "scene 0": torch.randn(3, 4),
+        "scene 1": torch.randn(5, 4),
+        "original": torch.randn(3, 4),
+    }
+    calls = []
+
+    def encode_fn(texts, *args, **kwargs):
+        calls.append(list(texts))
+        return [store[text] for text in texts]
+
+    replacement = _record_official_text_encode(
+        router,
+        encode_fn,
+        ["scene 0"],
+        [store["original"]],
+        (),
+        {},
+    )
+    assert calls == [["scene 0", "scene 1"]]
+    assert isinstance(replacement, list)
+    assert replacement[0] is store["scene 0"]
+    assert router.text_embeddings is not None
+    assert router.text_embeddings[0] is store["scene 0"]
+    assert router.text_embeddings[1] is store["scene 1"]
+
+
 def test_fantasy_cross_attn_keeps_full_sequence_for_audio():
     from sceneshifter.adapters.base import wrap_cross_attention
     from sceneshifter.adapters.fantasytalking import (

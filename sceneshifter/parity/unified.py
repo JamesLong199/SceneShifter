@@ -316,7 +316,7 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
         print(f"[parity-unified] text embed skip: {exc}", flush=True)
 
 
-def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwargs) -> None:
+def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwargs):
     if not isinstance(texts, (list, tuple)) or not texts:
         return
     prompts = (getattr(router, "config", {}) or {}).get("segment_prompts") or []
@@ -346,7 +346,37 @@ def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwarg
             dims = [tuple(t.shape) if hasattr(t, "shape") else None for t in router.text_embeddings]
             print(f"[parity-unified] encoded {len(embeds)} segment prompts on official T5 {dims}", flush=True)
         return
-    # Wan Animate/S2V encode one prompt at a time: first call is cond, second is null.
+    # Native S2V encodes every positive segment in one T5 batch and uses the
+    # first result as its baseline context before routing starts.
+    if (
+        getattr(router, "backend", None) == "wan_s2v"
+        and getattr(router, "text_embeddings", None) is None
+        and prompts
+    ):
+        encoded = encode_fn(list(prompts), *args, **kwargs)
+        if isinstance(encoded, (list, tuple)) and len(encoded) >= len(prompts):
+            raw_embeds = list(encoded[: len(prompts)])
+            if all(_is_text_embed(item) for item in raw_embeds):
+                router.set_text_embeddings(raw_embeds)
+                from sceneshifter.adapters.base import project_router_text_embeddings
+
+                project_router_text_embeddings(router)
+                dims = [
+                    tuple(item.shape) if hasattr(item, "shape") else None
+                    for item in router.text_embeddings
+                ]
+                print(
+                    f"[parity-unified] encoded {len(raw_embeds)} S2V prompts "
+                    f"in one T5 batch {dims}",
+                    flush=True,
+                )
+                first = raw_embeds[0]
+                if isinstance(out, tuple):
+                    return (first, *out[1:])
+                if isinstance(out, list):
+                    return [first, *out[1:]]
+                return first
+    # Wan Animate encodes one prompt at a time: first call is cond, second is null.
     if getattr(router, "text_embeddings", None) is None and prompts:
         embeds = []
         for prompt in prompts:
@@ -387,8 +417,10 @@ class _TextEncoderProxy:
 
     def __call__(self, texts, *args, **kwargs):
         out = self._inner(texts, *args, **kwargs)
-        _record_official_text_encode(self._router, self._inner, texts, out, args, kwargs)
-        return out
+        replacement = _record_official_text_encode(
+            self._router, self._inner, texts, out, args, kwargs
+        )
+        return out if replacement is None else replacement
 
     def __getattr__(self, name: str):
         return getattr(self._inner, name)
@@ -409,8 +441,10 @@ def _capture_null_context(pipeline: Any, router: Any) -> None:
 
         def wrapped(self, texts, *args, **kwargs):
             out = original_forward(texts, *args, **kwargs)
-            _record_official_text_encode(router, original_forward, texts, out, args, kwargs)
-            return out
+            replacement = _record_official_text_encode(
+                router, original_forward, texts, out, args, kwargs
+            )
+            return out if replacement is None else replacement
 
         encoder.forward = types.MethodType(wrapped, encoder)
         encoder._ss_null_captured = True
