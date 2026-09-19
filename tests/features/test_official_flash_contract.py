@@ -606,6 +606,43 @@ def test_fantasy_ref_loc_scores_union_fg_in_fp32(monkeypatch):
     assert seen["targets"][0].bool().tolist() == [True, True, False, False]
 
 
+def test_fantasy_collects_unscaled_q_but_attention_uses_scaled_q(monkeypatch):
+    cfg = canonical_config()
+    router = FramePromptRouter(
+        cfg, backend="fantasytalking", patch_height=2, patch_width=2
+    )
+    router.apply_q_scale = lambda q, block: q * 2
+    collected = {}
+    attended = []
+
+    def collect(router, module, q, k, timestep_idx, block_idx, pass_type):
+        collected["q"] = q.clone()
+
+    monkeypatch.setattr(base_adapter, "_collect_live_ref_attn", collect)
+
+    def flash(q, k, v, *args, **kwargs):
+        attended.append(q.clone())
+        return q
+
+    q = torch.ones(1, 32, 1, 2)
+    module = _Attn()
+    module.frame_prompt_router = router
+    module._ss_timestep = 3
+    module._ss_block_idx = 0
+    module._ss_pass = "cond"
+    scene_masked_official_flash(
+        flash,
+        "flash_attention",
+        module,
+        router,
+        (q, q.clone(), q.clone()),
+        {"k_lens": torch.tensor([32])},
+    )
+    assert torch.equal(collected["q"], q)
+    assert attended
+    assert all(torch.equal(value, torch.full_like(value, 2.0)) for value in attended)
+
+
 def test_multitalk_selector_heads_use_memory_safe_individual_calls(monkeypatch):
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["params"] = {

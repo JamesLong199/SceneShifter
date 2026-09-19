@@ -896,8 +896,14 @@ def scene_masked_official_flash(
         **trace_meta,
     )
 
+    unscaled_q = q
     q = router.apply_q_scale(q, block)
-    ref_loc_q = q
+    ref_loc_q = (
+        unscaled_q
+        if getattr(router, "backend", None)
+        in {"fantasytalking", "wan_s2v", "wan_animate"}
+        else q
+    )
     trace_tensor(
         "self_q_scaled",
         q,
