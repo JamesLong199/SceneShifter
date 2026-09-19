@@ -246,6 +246,63 @@ def derive_live_fg_from_class_scores(
     return out
 
 
+def derive_live_fg_from_class_scores_numpy(
+    fg_maps: torch.Tensor,
+    bg_map: torch.Tensor,
+    spatial_h: int,
+    spatial_w: int,
+    *,
+    drop_low_percent: float = 20.0,
+    min_component_size: int = 20,
+    hole_size: int = 0,
+) -> Optional[torch.Tensor]:
+    """MultiTalk's exact NumPy argmax/percentile live-mask implementation."""
+    fg = fg_maps.detach().float().cpu().numpy()
+    bg = bg_map.detach().float().cpu().numpy()
+    if fg.ndim == 2:
+        fg = fg[:, None, :]
+    if bg.ndim == 1:
+        bg = bg[None, :]
+    if fg.ndim != 3 or bg.ndim != 2:
+        return None
+    subjects, frames, spatial = fg.shape
+    if bg.shape != (frames, spatial):
+        return None
+    if spatial != int(spatial_h) * int(spatial_w):
+        return None
+    result = np.zeros((subjects, frames, spatial), dtype=np.bool_)
+    for frame in range(frames):
+        classes = np.concatenate([fg[:, frame], bg[None, frame]], axis=0)
+        labels = np.argmax(classes, axis=0)
+        sorted_scores = np.sort(classes, axis=0)
+        confidence = sorted_scores[-1] - sorted_scores[-2]
+        proposed = np.zeros(
+            (subjects, int(spatial_h), int(spatial_w)), dtype=np.uint8
+        )
+        for subject in range(subjects):
+            assigned = labels == subject
+            if float(drop_low_percent) > 0 and assigned.any():
+                threshold = np.percentile(
+                    confidence[assigned], float(drop_low_percent)
+                )
+                assigned &= confidence > threshold
+            mask = assigned.reshape(int(spatial_h), int(spatial_w)).astype(np.uint8)
+            mask = remove_small_components(mask, int(min_component_size))
+            mask = fill_small_holes(mask, int(hole_size))
+            proposed[subject] = mask
+        overlap = proposed.sum(axis=0)
+        if np.any(overlap > 1):
+            winners = np.argmax(
+                fg[:, frame].reshape(subjects, int(spatial_h), int(spatial_w)),
+                axis=0,
+            )
+            for y, x in zip(*np.where(overlap > 1)):
+                proposed[:, y, x] = 0
+                proposed[int(winners[y, x]), y, x] = 1
+        result[:, frame] = proposed.reshape(subjects, spatial) > 0
+    return torch.from_numpy(result)
+
+
 def derive_live_fg_from_union_scores(
     fg_map: torch.Tensor,
     bg_map: torch.Tensor,

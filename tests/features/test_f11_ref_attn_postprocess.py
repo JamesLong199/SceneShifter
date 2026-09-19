@@ -3,6 +3,7 @@ import torch
 
 from sceneshifter.ref_attn import (
     derive_live_fg_from_class_scores,
+    derive_live_fg_from_class_scores_numpy,
     derive_live_fg_from_union_scores,
     get_attn_map_with_target,
     live_bg_from_subject_fg,
@@ -75,3 +76,26 @@ def test_fantasy_union_fg_uses_strict_fp32_diff_threshold():
     assert mask is not None
     assert mask.shape == (1, 1, 4)
     assert mask[0, 0].tolist() == [True, False, True, False]
+
+
+@pytest.mark.feature
+def test_multitalk_numpy_class_mask_is_mutually_exclusive():
+    fg = torch.tensor(
+        [[[0.9, 0.2, 0.1, 0.1]], [[0.1, 0.8, 0.2, 0.1]]],
+        dtype=torch.float32,
+    )
+    bg = torch.tensor([[0.1, 0.1, 0.7, 0.9]], dtype=torch.float32)
+    mask = derive_live_fg_from_class_scores_numpy(
+        fg,
+        bg,
+        2,
+        2,
+        drop_low_percent=0.0,
+        min_component_size=1,
+        hole_size=0,
+    )
+    assert mask is not None
+    assert mask[:, 0].tolist() == [
+        [True, False, False, False],
+        [False, True, False, False],
+    ]

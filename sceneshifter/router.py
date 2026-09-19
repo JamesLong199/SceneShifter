@@ -25,6 +25,7 @@ from .qscale_scope import (
 )
 from .ref_attn import (
     derive_live_fg_from_class_scores,
+    derive_live_fg_from_class_scores_numpy,
     derive_live_fg_from_union_scores,
     live_bg_from_subject_fg,
     postprocess_live_fg,
@@ -460,7 +461,12 @@ class FramePromptRouter:
     ) -> torch.Tensor:
         if bool(self.freeze_live_mask) and self.live_bg is not None:
             return self.live_bg
-        live_fg = derive_live_fg_from_class_scores(
+        derive = (
+            derive_live_fg_from_class_scores_numpy
+            if self.backend == "multitalk"
+            else derive_live_fg_from_class_scores
+        )
+        live_fg = derive(
             fg_scores,
             bg_scores,
             self.patch_height,
