@@ -291,9 +291,10 @@ def test_freeze_live_mask_still_collects_scores():
     assert (0, 0, 0) in router._ref_loc_scores
 
 
-def test_s2v_ref_scores_publish_only_after_complete_step():
+@pytest.mark.parametrize("backend", ["wan_s2v", "wan_animate", "wan_fun_camera"])
+def test_ref_scores_publish_only_after_complete_step(backend):
     router = FramePromptRouter(
-        canonical_config(), backend="wan_s2v", patch_height=2, patch_width=2
+        canonical_config(), backend=backend, patch_height=2, patch_width=2
     )
     fg = torch.ones(1, 8, 4)
     bg = torch.zeros(8, 4)

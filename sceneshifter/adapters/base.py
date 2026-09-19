@@ -15,6 +15,7 @@ import torch.nn as nn
 
 from ..attention import gather_attention, scaled_dot_product
 from ..layouts import S2VTokenLayout
+from ..parity.trace import trace_tensor
 from ..ref_attn import get_attn_map_with_target
 from ..router import FramePromptRouter
 
@@ -634,12 +635,42 @@ def scene_masked_official_flash(
     block_idx = getattr(module, "_ss_block_idx", 0)
     pass_type = str(getattr(module, "_ss_pass", "cond"))
     block = router.active_block(timestep_idx, block_idx, pass_type)
+    trace_meta = {"backend": router.backend, "pass_type": pass_type}
+    trace_tensor(
+        "self_q_post_rope",
+        q,
+        step=timestep_idx,
+        layer=block_idx,
+        **trace_meta,
+    )
+    trace_tensor(
+        "self_k_post_rope",
+        k,
+        step=timestep_idx,
+        layer=block_idx,
+        **trace_meta,
+    )
+    trace_tensor(
+        "self_v",
+        v,
+        step=timestep_idx,
+        layer=block_idx,
+        **trace_meta,
+    )
     extra_key_fn = getattr(module, "_ss_extra_key_fn", None)
     if block is None:
         # Keep official packed-sequence flash (k_lens=seq_lens). Do not rewrite q/k/v.
         out = orig(*args, **kwargs)
         # Collect vanilla scores so scheduled steps can build the live mask.
         _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
+        trace_tensor(
+            "self_out",
+            out[0] if isinstance(out, tuple) else out,
+            step=timestep_idx,
+            layer=block_idx,
+            routed=False,
+            **trace_meta,
+        )
         return out
     refresh_idx = int(timestep_idx)
     if (
@@ -651,8 +682,22 @@ def scene_masked_official_flash(
         # from scores collected at t-1, then rebuilds after the step.
         refresh_idx -= 1
     router.refresh_live_mask_from_stored(refresh_idx, block)
+    trace_tensor(
+        "live_bg",
+        getattr(router, "live_bg", None),
+        step=timestep_idx,
+        layer=block_idx,
+        **trace_meta,
+    )
 
     q = router.apply_q_scale(q, block)
+    trace_tensor(
+        "self_q_scaled",
+        q,
+        step=timestep_idx,
+        layer=block_idx,
+        **trace_meta,
+    )
     # Official _forward_with_scene_mask accumulates in v.dtype (bf16), not fp32 Q.
     out = q.new_zeros(q.shape, dtype=v.dtype)
     video_tokens = router.num_frames * router.spatial_tokens
@@ -799,6 +844,14 @@ def scene_masked_official_flash(
             extra_idx = torch.arange(video_tokens, q.shape[1], device=q.device)
         if extra_idx.numel() == 0:
             _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
+            trace_tensor(
+                "self_out",
+                out,
+                step=timestep_idx,
+                layer=block_idx,
+                routed=True,
+                **trace_meta,
+            )
             return out
         piece = _call_official_flash(
             orig,
@@ -815,6 +868,14 @@ def scene_masked_official_flash(
             piece = piece[0]
         out.index_copy_(1, extra_idx, piece.to(dtype=out.dtype))
     _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
+    trace_tensor(
+        "self_out",
+        out,
+        step=timestep_idx,
+        layer=block_idx,
+        routed=True,
+        **trace_meta,
+    )
     return out
 
 
@@ -1118,7 +1179,8 @@ def thread_timestep(model: Any) -> None:
         if router is not None:
             if (
                 stepped
-                and getattr(router, "backend", None) in {"wan_s2v", "wan_animate"}
+                and getattr(router, "backend", None)
+                in {"wan_s2v", "wan_animate", "wan_fun_camera"}
             ):
                 router.complete_denoising_step()
             if (

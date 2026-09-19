@@ -198,6 +198,16 @@ def _commit_text_embeddings(
 
         attach_text_projector(router, pipeline)
         project_router_text_embeddings(router)
+    from sceneshifter.parity.trace import trace_tensor
+
+    for index, item in enumerate(router.text_embeddings):
+        trace_tensor(
+            "segment_text",
+            item,
+            backend=getattr(router, "backend", None),
+            segment=index,
+            source=source,
+        )
     dims = [tuple(item.shape) if hasattr(item, "shape") else None for item in router.text_embeddings]
     print(f"[parity-unified] encoded {len(usable)} segment prompts via {source} {dims}", flush=True)
 
@@ -320,8 +330,17 @@ def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwarg
         if embeds and all(_is_text_embed(item) for item in embeds):
             router.set_text_embeddings(embeds)
             from sceneshifter.adapters.base import project_router_text_embeddings
+            from sceneshifter.parity.trace import trace_tensor
 
             project_router_text_embeddings(router)
+            for index, item in enumerate(router.text_embeddings):
+                trace_tensor(
+                    "segment_text",
+                    item,
+                    backend=getattr(router, "backend", None),
+                    segment=index,
+                    source="official T5 pair",
+                )
             dims = [tuple(t.shape) if hasattr(t, "shape") else None for t in router.text_embeddings]
             print(f"[parity-unified] encoded {len(embeds)} segment prompts on official T5 {dims}", flush=True)
         return
@@ -334,8 +353,17 @@ def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwarg
         if embeds and all(_is_text_embed(item) for item in embeds):
             router.set_text_embeddings(embeds)
             from sceneshifter.adapters.base import project_router_text_embeddings
+            from sceneshifter.parity.trace import trace_tensor
 
             project_router_text_embeddings(router)
+            for index, item in enumerate(router.text_embeddings):
+                trace_tensor(
+                    "segment_text",
+                    item,
+                    backend=getattr(router, "backend", None),
+                    segment=index,
+                    source="official T5 single",
+                )
             dims = [tuple(t.shape) if hasattr(t, "shape") else None for t in router.text_embeddings]
             print(
                 f"[parity-unified] encoded {len(embeds)} segment prompts on single-prompt T5 {dims}",

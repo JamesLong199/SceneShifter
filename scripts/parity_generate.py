@@ -119,6 +119,9 @@ def main() -> int:
     parser.add_argument("--backbone", required=True, choices=BACKBONES)
     parser.add_argument("--gpu", type=int, required=True)
     parser.add_argument("--output_root", default=None)
+    parser.add_argument("--trace_dir", default=None)
+    parser.add_argument("--trace_steps", default="0")
+    parser.add_argument("--trace_layers", default="0,37")
     args = parser.parse_args()
 
     cfg = load_parity_config(args.backbone)
@@ -127,6 +130,10 @@ def main() -> int:
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    if args.trace_dir:
+        os.environ["SCENESHIFTER_TRACE_DIR"] = str(Path(args.trace_dir).resolve())
+        os.environ["SCENESHIFTER_TRACE_STEPS"] = str(args.trace_steps)
+        os.environ["SCENESHIFTER_TRACE_LAYERS"] = str(args.trace_layers)
 
     payload: Dict[str, Any] = {
         "side": args.side,
@@ -136,6 +143,11 @@ def main() -> int:
         "sample_id": cfg["sample_id"],
         "sceneshifter_sha": git_head(str(repo_root())),
         "config": cfg,
+        "trace": {
+            "directory": os.environ.get("SCENESHIFTER_TRACE_DIR"),
+            "steps": os.environ.get("SCENESHIFTER_TRACE_STEPS"),
+            "layers": os.environ.get("SCENESHIFTER_TRACE_LAYERS"),
+        },
     }
     if args.side == "reference":
         _checkout(cfg["reference"]["repo"], cfg["reference"]["branch"])

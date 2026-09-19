@@ -489,7 +489,7 @@ class FramePromptRouter:
     ) -> None:
         target = (
             self._pending_ref_loc_scores
-            if self.backend in {"wan_s2v", "wan_animate"}
+            if self.backend in {"wan_s2v", "wan_animate", "wan_fun_camera"}
             else self._ref_loc_scores
         )
         target[(int(timestep_idx), int(layer_idx), int(head_idx))] = (
@@ -555,7 +555,7 @@ class FramePromptRouter:
         if self._pending_ref_loc_scores:
             self._ref_loc_scores.update(self._pending_ref_loc_scores)
             self._pending_ref_loc_scores = {}
-        if self.backend in {"wan_s2v", "wan_animate"}:
+        if self.backend in {"wan_s2v", "wan_animate", "wan_fun_camera"}:
             self.live_bg = None
             self.live_subject_fg = None
 
