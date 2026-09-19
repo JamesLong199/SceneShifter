@@ -491,7 +491,13 @@ def _offload_dit_before_vae(pipeline: Any) -> None:
     vae._ss_decode_offload = True
 
 
-def _wrap_named_classes(mod: Any, names: List[str], router: Any, adapter: str) -> None:
+def _wrap_named_classes(
+    mod: Any,
+    names: List[str],
+    router: Any,
+    adapter: str,
+    routing: Optional[Dict[str, Any]] = None,
+) -> None:
     for name in names:
         cls = getattr(mod, name, None)
         if cls is None or not inspect.isclass(cls):
@@ -510,7 +516,9 @@ def _wrap_named_classes(mod: Any, names: List[str], router: Any, adapter: str) -
                 )
                 try:
                     _inject(target, router, adapter)
-                    _maybe_gate_talking_audio_cfg(target, router, adapter)
+                    _maybe_gate_talking_audio_cfg(
+                        target, router, adapter, routing or {}
+                    )
                     _maybe_set_text_embeddings(router, self, getattr(router, "config", {}))
                     _capture_null_context(self, router)
                     _offload_dit_before_vae(self)
@@ -534,7 +542,7 @@ def _wrap_create_pipeline(mod: Any, router: Any, adapter: str, routing: Dict[str
     def wrapped(*args, **kwargs):
         pipe = original(*args, **kwargs)
         _inject(pipe, router, adapter)
-        _maybe_gate_talking_audio_cfg(pipe, router, adapter)
+        _maybe_gate_talking_audio_cfg(pipe, router, adapter, routing)
         _maybe_set_text_embeddings(router, pipe, routing)
         _capture_null_context(pipe, router)
         _offload_dit_before_vae(pipe)
@@ -636,6 +644,7 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
             ["MultiTalkPipeline", "InfiniteTalkPipeline", "WanT2V", "WanI2V"],
             router,
             adapter,
+            routing,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"[parity-unified] wan class wrap skip: {exc}", flush=True)
@@ -664,10 +673,20 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     _invoke_generate(gm, script, argv)
 
 
-def _maybe_gate_talking_audio_cfg(target: Any, router: Any, adapter: str) -> None:
+def _maybe_gate_talking_audio_cfg(
+    target: Any,
+    router: Any,
+    adapter: str,
+    routing: Dict[str, Any],
+) -> None:
     if adapter not in {"multitalk", "infinitetalk"}:
         return
-    audio_start = int(getattr(router, "audio_start_timestep", 0) or 0)
+    audio_start = int(
+        getattr(router, "audio_start_timestep", None)
+        if router is not None
+        else routing.get("audio_start_timestep", 0)
+        or 0
+    )
     if audio_start <= 0:
         return
     dit = (
@@ -676,6 +695,11 @@ def _maybe_gate_talking_audio_cfg(target: Any, router: Any, adapter: str) -> Non
         or getattr(target, "transformer", None)
         or target
     )
+    from sceneshifter.adapters.base import find_audio_modules
+
+    for module in find_audio_modules(dit):
+        module._ss_audio_start_override = audio_start
+        module._ss_zero_first_audio_frame = adapter == "infinitetalk"
     _install_talking_audio_cfg_gate(dit, audio_start)
 
 

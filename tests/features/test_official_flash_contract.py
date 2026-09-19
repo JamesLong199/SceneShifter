@@ -237,6 +237,24 @@ def test_audio_residual_skipped_before_start():
     assert torch.equal(module(x), x + 1)
 
 
+def test_audio_override_works_without_router_and_zeros_first_frame():
+    class Audio(nn.Module):
+        def forward(self, x, **kwargs):
+            return x + 1
+
+    module = Audio()
+    wrap_audio_attention(module, None)
+    module._ss_audio_start_override = 2
+    module._ss_zero_first_audio_frame = True
+    x = torch.zeros(1, 8, 2)
+    module._ss_timestep = 1
+    assert torch.equal(module(x, shape=(2, 2, 2)), torch.zeros_like(x))
+    module._ss_timestep = 2
+    output = module(x, shape=(2, 2, 2))
+    assert torch.equal(output[:, :4], torch.zeros_like(output[:, :4]))
+    assert torch.equal(output[:, 4:], torch.ones_like(output[:, 4:]))
+
+
 def test_unrestricted_collects_ref_loc_without_updating_mask():
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]

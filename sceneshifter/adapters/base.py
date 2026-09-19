@@ -95,10 +95,30 @@ def wrap_audio_attention(module: nn.Module, router: Optional[FramePromptRouter])
     def forward(self, x, *args, **kwargs):
         active = getattr(self, "frame_prompt_router", None)
         timestep_idx = int(getattr(self, "_ss_timestep", 0) or 0)
-        start = int(getattr(active, "audio_start_timestep", 0) or 0) if active is not None else 0
-        if active is not None and int(timestep_idx) < start:
+        start = int(
+            getattr(
+                self,
+                "_ss_audio_start_override",
+                getattr(active, "audio_start_timestep", 0) if active is not None else 0,
+            )
+            or 0
+        )
+        if int(timestep_idx) < start:
             return torch.zeros_like(x)
-        return original(x, *args, **kwargs)
+        output = original(x, *args, **kwargs)
+        if bool(getattr(self, "_ss_zero_first_audio_frame", False)):
+            shape = kwargs.get("shape")
+            if shape is None and len(args) >= 2:
+                shape = args[1]
+            try:
+                frames = int(shape[0])
+                spatial = int(output.shape[1]) // max(frames, 1)
+            except (TypeError, ValueError, IndexError):
+                spatial = 0
+            if spatial > 0:
+                output = output.clone()
+                output[:, :spatial] = 0
+        return output
 
     module.forward = types.MethodType(forward, module)
     module._ss_audio_wrapped = True
