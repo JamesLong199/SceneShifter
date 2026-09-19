@@ -898,11 +898,7 @@ def scene_masked_official_flash(
     )
 
     q = router.apply_q_scale(q, block)
-    ref_loc_q = (
-        _ref_loc_query_for_scene_mask(module, router, block, q)
-        if getattr(router, "backend", None) == "multitalk"
-        else q
-    )
+    ref_loc_q = q
     trace_tensor(
         "self_q_scaled",
         q,
