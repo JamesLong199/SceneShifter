@@ -1170,6 +1170,7 @@ def wrap_self_attention(
                 self._ss_q_pre_rope = None
                 self._ss_k_pre_rope = None
                 self._ss_freqs = None
+                self._ss_v_for_ref = None
 
         module.forward = types.MethodType(forward, module)
         return module

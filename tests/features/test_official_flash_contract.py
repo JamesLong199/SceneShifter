@@ -175,6 +175,30 @@ def test_scene_mask_flash_drops_packed_lens():
     assert all(item is None or item == "missing" for item in captured)
 
 
+def test_wrapped_self_attention_releases_ref_value_stash(monkeypatch):
+    from sceneshifter.adapters.base import wrap_self_attention
+
+    def fake_flash(q, k, v, **kwargs):
+        return q
+
+    class Official(nn.Module):
+        def forward(self, q, k, v, grid_sizes=None):
+            return flash_attention(q, k, v)
+
+    monkeypatch.setitem(Official.forward.__globals__, "flash_attention", fake_flash)
+    router = FramePromptRouter(
+        canonical_config(), backend="wan_animate", patch_height=2, patch_width=2
+    )
+    module = Official()
+    wrap_self_attention(module, router)
+    module._ss_timestep = 3
+    module._ss_block_idx = 0
+    module._ss_pass = "cond"
+    q = torch.randn(1, 32, 1, 2)
+    module(q, q.clone(), q.clone(), grid_sizes=torch.tensor([[8, 2, 2]]))
+    assert module._ss_v_for_ref is None
+
+
 def test_s2v_scene_mask_preserves_reference_and_framepack_contract(bg_mask_path):
     cfg = canonical_config(
         background_mask_path=bg_mask_path,
