@@ -55,3 +55,15 @@ def test_every_parity_config_locks_both_revisions():
         assert len(str(locks.get("reference_feature_sha") or "")) == 40, cfg["backbone"]
         assert len(str(locks.get("reference_base_sha") or "")) == 40, cfg["backbone"]
         assert len(str(locks.get("official_sha") or "")) == 40, cfg["backbone"]
+
+
+def test_parity_launcher_exposes_current_env_media_tools(monkeypatch):
+    import os
+    import sys
+
+    from scripts.parity_generate import _prepend_python_bin_to_path
+
+    monkeypatch.setenv("PATH", "/usr/bin")
+    expected = str(Path(sys.executable).resolve().parent)
+    assert _prepend_python_bin_to_path() == expected
+    assert os.environ["PATH"].split(os.pathsep)[0] == expected

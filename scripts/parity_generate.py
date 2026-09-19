@@ -38,6 +38,14 @@ BACKBONES = [
 ]
 
 
+def _prepend_python_bin_to_path() -> str:
+    env_bin = str(Path(sys.executable).resolve().parent)
+    path_parts = os.environ.get("PATH", "").split(os.pathsep)
+    if env_bin not in path_parts:
+        os.environ["PATH"] = os.pathsep.join([env_bin, *path_parts])
+    return env_bin
+
+
 def _checkout(repo: str, branch: str) -> None:
     current = subprocess.check_output(
         ["git", "-C", repo, "rev-parse", "--abbrev-ref", "HEAD"], text=True
@@ -130,6 +138,9 @@ def main() -> int:
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    # Media helpers are subprocesses. Running an env's Python directly does not
+    # activate that env, so make its ffmpeg/ffprobe binaries discoverable.
+    _prepend_python_bin_to_path()
     if args.trace_dir:
         os.environ["SCENESHIFTER_TRACE_DIR"] = str(Path(args.trace_dir).resolve())
         os.environ["SCENESHIFTER_TRACE_STEPS"] = str(args.trace_steps)
