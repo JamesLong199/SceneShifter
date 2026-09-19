@@ -681,12 +681,7 @@ def _maybe_gate_talking_audio_cfg(
 ) -> None:
     if adapter not in {"multitalk", "infinitetalk"}:
         return
-    audio_start = int(
-        getattr(router, "audio_start_timestep", None)
-        if router is not None
-        else routing.get("audio_start_timestep", 0)
-        or 0
-    )
+    audio_start = int(getattr(router, "audio_start_timestep", 0) or 0)
     if audio_start <= 0:
         return
     dit = (
@@ -695,11 +690,6 @@ def _maybe_gate_talking_audio_cfg(
         or getattr(target, "transformer", None)
         or target
     )
-    from sceneshifter.adapters.base import find_audio_modules
-
-    for module in find_audio_modules(dit):
-        module._ss_audio_start_override = audio_start
-        module._ss_zero_first_audio_frame = adapter == "infinitetalk"
     _install_talking_audio_cfg_gate(dit, audio_start)
 
 

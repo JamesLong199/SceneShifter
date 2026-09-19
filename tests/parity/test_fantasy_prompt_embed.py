@@ -8,7 +8,6 @@ from sceneshifter.parity.unified import (
     _inject,
     _install_encode_prompt_hook,
     _install_fantasy_audio_cfg_gate,
-    _maybe_gate_talking_audio_cfg,
     _unwrap_prompt_embed,
 )
 from sceneshifter.router import FramePromptRouter
@@ -294,30 +293,6 @@ def test_fantasy_audio_cfg_gate_reuses_posi_before_start():
     assert model.n == 3
     assert not torch.equal(third, first)
     assert model.audio_scales == [0.0, 0.0, 1.0]
-
-
-def test_talking_audio_override_survives_disabled_router():
-    class Audio(nn.Module):
-        def forward(self, x, **kwargs):
-            return x
-
-    class Model(nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.audio_cross_attn = Audio()
-
-        def forward(self, x, **kwargs):
-            return x
-
-    model = Model()
-    _maybe_gate_talking_audio_cfg(
-        model,
-        None,
-        "infinitetalk",
-        {"audio_start_timestep": 20},
-    )
-    assert model.audio_cross_attn._ss_audio_start_override == 20
-    assert model.audio_cross_attn._ss_zero_first_audio_frame is True
 
 
 def test_extract_qkv_mixed_v_keyword():
