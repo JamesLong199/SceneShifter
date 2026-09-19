@@ -349,7 +349,7 @@ def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwarg
     # Native S2V encodes every positive segment in one T5 batch and uses the
     # first result as its baseline context before routing starts.
     if (
-        getattr(router, "backend", None) == "wan_s2v"
+        getattr(router, "backend", None) in {"wan_s2v", "wan_animate"}
         and getattr(router, "text_embeddings", None) is None
         and prompts
     ):
@@ -366,7 +366,8 @@ def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwarg
                     for item in router.text_embeddings
                 ]
                 print(
-                    f"[parity-unified] encoded {len(raw_embeds)} S2V prompts "
+                    f"[parity-unified] encoded {len(raw_embeds)} "
+                    f"{getattr(router, 'backend', 'Wan')} prompts "
                     f"in one T5 batch {dims}",
                     flush=True,
                 )

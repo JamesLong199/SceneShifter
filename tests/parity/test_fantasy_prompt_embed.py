@@ -127,11 +127,12 @@ def test_record_single_prompt_t5_sets_segments_then_null():
     assert router.null_text_embeddings is store["neg"]
 
 
-def test_s2v_records_segments_in_one_batch_and_replaces_baseline():
+@pytest.mark.parametrize("backend", ["wan_s2v", "wan_animate"])
+def test_wan_records_segments_in_one_batch_and_replaces_baseline(backend):
     from sceneshifter.parity.unified import _record_official_text_encode
 
     cfg = canonical_config()
-    router = FramePromptRouter(cfg, backend="wan_s2v", patch_height=2, patch_width=2)
+    router = FramePromptRouter(cfg, backend=backend, patch_height=2, patch_width=2)
     store = {
         "scene 0": torch.randn(3, 4),
         "scene 1": torch.randn(5, 4),

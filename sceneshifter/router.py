@@ -172,7 +172,7 @@ class FramePromptRouter:
                 raw_fg,
                 self.patch_height,
                 self.patch_width,
-                center_crop=self.backend in {"wan_s2v", "wan_animate"},
+                center_crop=self.backend == "wan_s2v",
                 cover_original=bool(cfg.get("input_mask_cover_original", False)),
             )
 

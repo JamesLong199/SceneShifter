@@ -15,6 +15,7 @@ from sceneshifter.adapters.base import (
     wrap_audio_attention,
     wrap_cross_attention,
 )
+from sceneshifter.masks import downsample_subject_fg
 from sceneshifter.router import FramePromptRouter
 from tests.conftest import canonical_config
 
@@ -92,6 +93,26 @@ def test_s2v_nested_grid_does_not_infer_spatial_from_extra_tokens():
         64,
         2816,
     )
+
+
+def test_animate_grid_reconciliation_uses_direct_mask_resize():
+    router = FramePromptRouter(
+        canonical_config(), backend="wan_animate", patch_height=4, patch_width=6
+    )
+    raw = torch.zeros(1, 8, 24, 16, dtype=torch.bool)
+    raw[..., :, 0] = True
+    router.raw_subject_fg = raw
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 7, 4]])
+    q = torch.zeros(1, 8 * 7 * 4, 1, 1)
+    expected_subjects, expected_bg = downsample_subject_fg(
+        raw, 7, 4, center_crop=False
+    )
+    cropped_subjects, _ = downsample_subject_fg(raw, 7, 4, center_crop=True)
+    assert not torch.equal(expected_subjects, cropped_subjects)
+    _maybe_update_spatial(router, module, q)
+    assert torch.equal(router.subject_fg_masks, expected_subjects)
+    assert torch.equal(router.static_bg, expected_bg)
 
 
 def test_unrestricted_flash_keeps_k_lens():

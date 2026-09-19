@@ -146,8 +146,7 @@ def _maybe_update_spatial(router: FramePromptRouter, module: nn.Module, q: torch
                 raw,
                 gh,
                 gw,
-                center_crop=getattr(router, "backend", None)
-                in {"wan_s2v", "wan_animate"},
+                center_crop=getattr(router, "backend", None) == "wan_s2v",
                 cover_original=bool(
                     (getattr(router, "config", {}) or {}).get(
                         "input_mask_cover_original", False
