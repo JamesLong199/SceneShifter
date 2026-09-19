@@ -616,7 +616,11 @@ def _collect_live_ref_attn(
     spatial = int(router.spatial_tokens)
     video = int(router.num_frames) * spatial
     if q.shape[1] < video or k.shape[1] < spatial:
-        return
+        raise RuntimeError(
+            f"{router.backend} ref-attn selector L{int(block_idx)} has "
+            f"q/k lengths {int(q.shape[1])}/{int(k.shape[1])}, expected at least "
+            f"{video}/{spatial}"
+        )
     # Official get_attn_map_with_target runs q/k as v.dtype (usually bf16).
     v = getattr(module, "_ss_v_for_ref", None)
     score_dtype = v.dtype if torch.is_tensor(v) else q.dtype
@@ -631,26 +635,31 @@ def _collect_live_ref_attn(
         k_score = k_score[-1:]
     targets = _ref_target_masks(router, spatial, q.device, score_dtype)
     if targets is None:
-        return
+        raise RuntimeError(
+            f"{router.backend} ref-attn selector L{int(block_idx)} has no target masks"
+        )
     grid = getattr(module, "_ss_grid_sizes", None)
     shape = _grid_fhw(grid, router)
     spf = int(shape[1]) * int(shape[2])
     if int(targets.shape[-1]) != spf:
-        # S2V packs extra motion/cond tokens; do not crash official flash.
-        return
+        raise RuntimeError(
+            f"{router.backend} ref-attn selector L{int(block_idx)} target spatial "
+            f"{int(targets.shape[-1])} != grid spatial {spf} from {shape}"
+        )
     q_for_scores = q_score[:, :video]
     k_for_scores = k_score
     if getattr(router, "backend", None) == "wan_s2v":
-        try:
-            layout = _s2v_token_layout(router, int(k_score.shape[1]))
-        except ValueError:
-            return
+        layout = _s2v_token_layout(router, int(k_score.shape[1]))
         k_for_scores = k_score[:, layout.reference_slice]
     num_subjects = int(targets.shape[0] - 1)
     # One head at a time: a full 40-head map is ~7GB and OOMs next to the 14B DiT.
+    stored = 0
     for head in wanted_heads:
         if head < 0 or head >= int(q.shape[2]):
-            continue
+            raise RuntimeError(
+                f"{router.backend} ref-attn selector L{int(block_idx)}H{int(head)} "
+                f"outside {int(q.shape[2])} heads"
+            )
         try:
             scores = get_attn_map_with_target(
                 q_for_scores[:, :, head : head + 1],
@@ -658,15 +667,30 @@ def _collect_live_ref_attn(
                 shape,
                 targets,
             )
-        except RuntimeError:
-            return
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"{router.backend} ref-attn selector L{int(block_idx)}H{int(head)} "
+                "score collection failed"
+            ) from exc
         if scores is None:
-            continue
+            raise RuntimeError(
+                f"{router.backend} ref-attn selector L{int(block_idx)}H{int(head)} "
+                "returned no scores"
+            )
         if int(scores.shape[1]) != video or video % spatial != 0:
-            continue
+            raise RuntimeError(
+                f"{router.backend} ref-attn selector L{int(block_idx)}H{int(head)} "
+                f"score shape {tuple(scores.shape)} does not match video={video}"
+            )
         fg = scores[:num_subjects].reshape(num_subjects, router.num_frames, spatial)
         bg = scores[num_subjects].reshape(router.num_frames, spatial)
         router.store_ref_loc_head(timestep_idx, int(block_idx), int(head), fg, bg)
+        stored += 1
+    if stored != len(wanted_heads):
+        raise RuntimeError(
+            f"{router.backend} ref-attn selector L{int(block_idx)} stored "
+            f"{stored}/{len(wanted_heads)} heads"
+        )
     if publish_animate:
         router.complete_denoising_step()
 

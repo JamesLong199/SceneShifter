@@ -353,7 +353,7 @@ def test_animate_publishes_selector_scores_at_last_cond_layer():
     assert (0, 0, 0) in router._ref_loc_scores
 
 
-def test_collect_skips_s2v_grid_mask_mismatch():
+def test_collect_fails_loud_on_s2v_grid_mask_mismatch():
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]
     cfg["attention_control_schedule"][0]["params"] = {
@@ -379,14 +379,15 @@ def test_collect_skips_s2v_grid_mask_mismatch():
     module._ss_block_idx = 0
     module._ss_pass = "cond"
     module._ss_grid_sizes = torch.tensor([[21, 21, 21]])
-    scene_masked_official_flash(
-        fake_flash,
-        "flash_attention",
-        module,
-        router,
-        (q, q.clone(), q.clone()),
-        {"k_lens": torch.tensor([32])},
-    )
+    with pytest.raises(RuntimeError, match="ref-attn selector"):
+        scene_masked_official_flash(
+            fake_flash,
+            "flash_attention",
+            module,
+            router,
+            (q, q.clone(), q.clone()),
+            {"k_lens": torch.tensor([32])},
+        )
     assert router._ref_loc_scores == {}
 
 
