@@ -67,3 +67,17 @@ def test_parity_launcher_exposes_current_env_media_tools(monkeypatch):
     expected = str(Path(sys.executable).resolve().parent)
     assert _prepend_python_bin_to_path() == expected
     assert os.environ["PATH"].split(os.pathsep)[0] == expected
+
+
+def test_reference_gpu_mapping_handles_fantasy_worker_override(tmp_path):
+    from sceneshifter.parity.common import load_parity_config
+    from scripts.parity_generate import _reference_command
+
+    fantasy = _reference_command(
+        load_parity_config("fantasytalking"), tmp_path / "fantasy", 6
+    )
+    multitalk = _reference_command(
+        load_parity_config("multitalk"), tmp_path / "multitalk", 6
+    )
+    assert fantasy[fantasy.index("--gpus") + 1] == "6"
+    assert multitalk[multitalk.index("--gpus") + 1] == "0"

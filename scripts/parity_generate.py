@@ -81,9 +81,10 @@ def _reference_command(cfg: Dict[str, Any], out_dir: Path, gpu: int) -> List[str
     extra = list(ref.get("extra_args") or [])
     backbone = cfg["backbone"]
     cmd = [python, "-u", script]
-    # CUDA_VISIBLE_DEVICES already selects the physical GPU; batch workers
-    # must use the remapped ordinal 0, not the host GPU id.
-    visible_gpu = "0"
+    # Most batch workers call torch.cuda.set_device() inside the inherited
+    # CUDA_VISIBLE_DEVICES mapping, so they need ordinal 0. Fantasy's worker
+    # overwrites CUDA_VISIBLE_DEVICES itself and therefore needs the physical id.
+    visible_gpu = str(gpu) if backbone == "fantasytalking" else "0"
     if backbone == "hunyuan_avatar":
         cmd += [
             "--dataset-root", cfg["dataset_root"],
