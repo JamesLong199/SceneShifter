@@ -452,6 +452,23 @@ def test_inject_finds_wan_animate_noise_model():
     assert len(bound) >= 1
 
 
+def test_animate_prompt_is_forwarded_to_official_generate():
+    import types
+
+    from sceneshifter.parity.unified import _install_animate_prompt_forwarding
+
+    class WanAnimate:
+        def generate(self, **kwargs):
+            return kwargs
+
+    module = types.SimpleNamespace(WanAnimate=WanAnimate)
+    _install_animate_prompt_forwarding(module, "English parity prompt")
+    output = WanAnimate().generate(src_root_path="/tmp/process")
+    assert output["input_prompt"] == "English parity prompt"
+    explicit = WanAnimate().generate(input_prompt="explicit")
+    assert explicit["input_prompt"] == "explicit"
+
+
 def test_animate_cross_attention_runs_clip_branch_once(monkeypatch):
     from sceneshifter.adapters.wan_animate import wrap_animate_cross_attention
 

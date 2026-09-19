@@ -1027,6 +1027,7 @@ def run_animate_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     try:
         import wan  # type: ignore
 
+        _install_animate_prompt_forwarding(wan, unified.get("prompt", ""))
         _wrap_named_classes(wan, ["WanAnimate", "WanI2V", "WanT2V"], router, "wan_animate")
     except Exception as exc:  # noqa: BLE001
         print(f"[parity-unified] wan animate wrap skip: {exc}", flush=True)
@@ -1046,6 +1047,24 @@ def run_animate_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
         "--offload_model", "True",
     ]
     _invoke_generate(gm, "generate.py", argv)
+
+
+def _install_animate_prompt_forwarding(wan_module: Any, prompt: str) -> None:
+    """Official Wan 42bf parses --prompt but omits it from WanAnimate.generate."""
+    cls = getattr(wan_module, "WanAnimate", None)
+    if cls is None or not inspect.isclass(cls):
+        raise RuntimeError("official wan.WanAnimate class is unavailable")
+    cls._ss_input_prompt = str(prompt)
+    if getattr(cls, "_ss_prompt_forwarding", False):
+        return
+    original = cls.generate
+
+    def generate(self, *args, **kwargs):
+        kwargs.setdefault("input_prompt", str(getattr(type(self), "_ss_input_prompt", "")))
+        return original(self, *args, **kwargs)
+
+    cls.generate = generate
+    cls._ss_prompt_forwarding = True
 
 
 def _allow_missing_flex_attention() -> None:
