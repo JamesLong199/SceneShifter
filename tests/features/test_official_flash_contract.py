@@ -5,6 +5,7 @@ import torch.nn as nn
 from sceneshifter.adapters import base as base_adapter
 from sceneshifter.adapters.base import (
     _grid_fhw,
+    _fun_camera_serial_pass,
     _maybe_update_spatial,
     _ref_loc_query_for_scene_mask,
     _rerope_queries,
@@ -56,6 +57,13 @@ def test_local_rerope_policy_is_backend_specific():
     mt_block = multitalk.active_block(3, 0, "cond")
     assert mt_block is not None
     assert _should_local_rerope(multitalk, mt_block, 1, None)
+
+
+def test_fun_camera_serial_pass_resets_each_timestep():
+    module = _Attn()
+    assert _fun_camera_serial_pass(module, 3) == "cond"
+    assert _fun_camera_serial_pass(module, 3) == "uncond"
+    assert _fun_camera_serial_pass(module, 4) == "cond"
 
 
 def test_grid_fhw_flattens_s2v_nonscalar_row():
@@ -487,6 +495,31 @@ def test_fun_camera_batched_cfg_routes_only_cond_row():
     out = module(x, context)
     assert out.shape == x.shape
     assert [float(value[0, 0, 0]) for value in seen] == [-1.0, 10.0, -1.0, 20.0]
+
+
+def test_fun_camera_serialized_cfg_routes_first_call_only():
+    cfg = canonical_config()
+    router = FramePromptRouter(
+        cfg, backend="wan_fun_camera", patch_height=2, patch_width=2
+    )
+    router.set_text_embeddings(
+        [torch.full((1, 3, 4), 10.0), torch.full((1, 3, 4), 20.0)]
+    )
+    seen = []
+
+    class Cross(nn.Module):
+        def forward(self, x, context, context_lens=None):
+            seen.append(float(context[0, 0, 0]))
+            return x
+
+    module = Cross()
+    wrap_cross_attention(module, router)
+    module._ss_timestep = 3
+    module._ss_pass = "uncond"  # Outer CFG wrapper is intentionally misleading.
+    x = torch.randn(1, 32, 4)
+    module(x, torch.ones(1, 3, 4))
+    module(x, torch.full((1, 3, 4), -1.0))
+    assert seen == [10.0, 20.0, -1.0]
 
 
 def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):

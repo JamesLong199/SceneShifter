@@ -26,6 +26,17 @@ _CURRENT_MODULE: contextvars.ContextVar[Optional[nn.Module]] = contextvars.Conte
 _FLASH_NAMES = ("flash_attention", "attention", "sageattn")
 
 
+def _fun_camera_serial_pass(module: nn.Module, timestep_idx: int) -> str:
+    """Official Fun CFG serialization calls each module cond, then uncond."""
+    step = int(timestep_idx)
+    if getattr(module, "_ss_fun_pass_step", None) != step:
+        module._ss_fun_pass_step = step
+        module._ss_fun_pass_calls = 0
+    calls = int(getattr(module, "_ss_fun_pass_calls", 0))
+    module._ss_fun_pass_calls = calls + 1
+    return "cond" if calls % 2 == 0 else "uncond"
+
+
 def find_attention_modules(
     model: Any,
     *,
@@ -1048,6 +1059,14 @@ def wrap_self_attention(
         def forward(self, *args, **kwargs):
             self._ss_rope_n = 0
             _stash_grid_sizes(self, args, kwargs)
+            active_router = getattr(self, "frame_prompt_router", None)
+            if (
+                active_router is not None
+                and getattr(active_router, "backend", None) == "wan_fun_camera"
+            ):
+                self._ss_pass = _fun_camera_serial_pass(
+                    self, int(getattr(self, "_ss_timestep", 0) or 0)
+                )
             token = _CURRENT_MODULE.set(self)
             try:
                 return original(*args, **kwargs)
@@ -1146,6 +1165,13 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
         active_router = getattr(self, "frame_prompt_router", None)
         timestep_idx = kwargs.pop("timestep_idx", getattr(self, "_ss_timestep", 0))
         pass_type = kwargs.pop("pass_type", getattr(self, "_ss_pass", "cond"))
+        if (
+            active_router is not None
+            and getattr(active_router, "backend", None) == "wan_fun_camera"
+            and int(x.shape[0]) == 1
+        ):
+            pass_type = _fun_camera_serial_pass(self, int(timestep_idx))
+            self._ss_pass = pass_type
         kwargs.pop("block_idx", None)
         if active_router is None or context is None:
             if context is None:
