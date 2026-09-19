@@ -536,12 +536,14 @@ def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):
     router.static_bg = ~router.subject_fg_masks.any(0)
     seen = {}
 
-    def scores(visual_q, ref_k, shape, targets):
+    def scores(visual_q, ref_k, shape, targets, chunk_size=256):
         seen["batch"] = int(visual_q.shape[0])
         seen["value"] = float(visual_q[0, 0, 0, 0])
-        return torch.zeros(2, 32)
+        return torch.zeros(2, 32, visual_q.shape[2])
 
-    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
+    monkeypatch.setattr(
+        base_adapter, "get_attn_map_with_target_per_head_chunked", scores
+    )
     module = _Attn()
     module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
     module._ss_v_for_ref = torch.zeros(2, 32, 1, 1)
@@ -567,12 +569,14 @@ def test_fantasy_ref_loc_scores_union_fg_in_fp32(monkeypatch):
     router.static_bg = ~router.subject_fg_masks.any(0)
     seen = {}
 
-    def scores(visual_q, ref_k, shape, targets):
+    def scores(visual_q, ref_k, shape, targets, chunk_size=256):
         seen["dtype"] = visual_q.dtype
         seen["targets"] = targets.clone()
-        return torch.zeros(2, 32)
+        return torch.zeros(2, 32, visual_q.shape[2])
 
-    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
+    monkeypatch.setattr(
+        base_adapter, "get_attn_map_with_target_per_head_chunked", scores
+    )
     module = _Attn()
     module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
     module._ss_v_for_ref = torch.zeros(1, 32, 1, 1, dtype=torch.bfloat16)
@@ -615,6 +619,38 @@ def test_selector_heads_are_collected_in_one_batched_score_call(monkeypatch):
     assert seen == [(2, [True, True])]
     assert (0, 0, 0) in router._ref_loc_scores
     assert (0, 0, 1) in router._ref_loc_scores
+
+
+def test_animate_computes_all_heads_then_stores_selected(monkeypatch):
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[0, 2], [0, 3]],
+    }
+    router = FramePromptRouter(
+        cfg, backend="wan_animate", patch_height=2, patch_width=2
+    )
+    router._ss_num_self_layers = 2
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    seen = []
+
+    def scores(visual_q, ref_k, shape, targets, chunk_size=256):
+        seen.append(int(visual_q.shape[2]))
+        return torch.zeros(2, 32, visual_q.shape[2])
+
+    monkeypatch.setattr(
+        base_adapter, "get_attn_map_with_target_per_head_chunked", scores
+    )
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 4, 2)
+    q = torch.randn(1, 32, 4, 2)
+    base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
+    assert seen == [4]
+    assert (0, 0, 2) in router._pending_ref_loc_scores
+    assert (0, 0, 3) in router._pending_ref_loc_scores
 
 
 def test_cross_attn_keeps_s2v_extra_tokens():

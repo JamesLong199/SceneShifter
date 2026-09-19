@@ -183,6 +183,41 @@ def get_attn_map_with_target_chunked(
     return torch.cat(chunks, dim=1) if chunks else None
 
 
+def get_attn_map_with_target_per_head_chunked(
+    visual_q: torch.Tensor,
+    ref_k: torch.Tensor,
+    shape,
+    ref_target_masks: torch.Tensor,
+    *,
+    chunk_size: int = 256,
+) -> Optional[torch.Tensor]:
+    """FP32 chunked class scores preserving the native per-head axis."""
+    if torch.is_tensor(shape):
+        frames, height, width = (int(shape[0]), int(shape[1]), int(shape[2]))
+    else:
+        frames, height, width = (int(value) for value in shape)
+    spatial = height * width
+    sequence = frames * spatial
+    if visual_q.shape[0] != 1 or visual_q.shape[1] < sequence:
+        return None
+    query = visual_q[:, :sequence].float()
+    key = ref_k[:, :spatial].to(device=query.device).float()
+    targets = ref_target_masks.to(device=query.device, dtype=torch.float32)
+    denoms = targets.sum(-1).clamp_min(1.0)
+    chunks = []
+    for start in range(0, sequence, int(chunk_size)):
+        current = query[:, start : start + int(chunk_size)]
+        logits = torch.einsum("bqhd,bkhd->bhqk", current, key)
+        probs = (logits * (query.shape[-1] ** -0.5)).softmax(-1)
+        classes = []
+        for class_idx, target in enumerate(targets):
+            per_head = (probs * target.view(1, 1, 1, -1)).sum(-1)
+            per_head = per_head / denoms[class_idx]
+            classes.append(per_head[0].permute(1, 0))
+        chunks.append(torch.stack(classes, dim=0))
+    return torch.cat(chunks, dim=1) if chunks else None
+
+
 def get_attn_map_with_target_per_head(
     visual_q: torch.Tensor,
     ref_k: torch.Tensor,

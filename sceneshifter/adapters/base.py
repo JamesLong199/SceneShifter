@@ -16,7 +16,10 @@ import torch.nn as nn
 from ..attention import gather_attention, scaled_dot_product
 from ..layouts import S2VTokenLayout
 from ..parity.trace import trace_tensor
-from ..ref_attn import get_attn_map_with_target, get_attn_map_with_target_chunked
+from ..ref_attn import (
+    get_attn_map_with_target,
+    get_attn_map_with_target_per_head_chunked,
+)
 from ..router import FramePromptRouter
 
 _CURRENT_MODULE: contextvars.ContextVar[Optional[nn.Module]] = contextvars.ContextVar(
@@ -691,10 +694,15 @@ def _collect_live_ref_attn(
                 f"outside {int(q.shape[2])} heads"
             )
         valid_heads.append(int(head))
-    # Native ports aggregate every requested head in one batched score call.
-    # Splitting heads into separate kernels changes threshold-boundary values.
+    per_head_backends = {
+        "fantasytalking",
+        "wan_s2v",
+        "wan_animate",
+        "wan_fun_camera",
+    }
+    backend = getattr(router, "backend", None)
     try:
-        if getattr(router, "backend", None) == "multitalk":
+        if backend == "multitalk":
             head_mask = torch.zeros(
                 int(q_for_scores.shape[2]), dtype=torch.bool, device=q.device
             )
@@ -706,46 +714,75 @@ def _collect_live_ref_attn(
                 targets,
                 head_mask=head_mask,
             )
-        else:
+            per_head_scores = None
+        elif backend in per_head_backends:
+            compute_heads = (
+                valid_heads
+                if backend == "wan_s2v"
+                else list(range(int(q_for_scores.shape[2])))
+            )
             head_index = torch.tensor(
-                valid_heads, dtype=torch.long, device=q.device
+                compute_heads, dtype=torch.long, device=q.device
             )
             selected_q = q_for_scores.index_select(2, head_index)
             selected_k = k_for_scores.index_select(2, head_index)
-        if getattr(router, "backend", None) in {"wan_s2v", "wan_animate"}:
-            scores = get_attn_map_with_target_chunked(
+            per_head_scores = get_attn_map_with_target_per_head_chunked(
                 selected_q,
                 selected_k,
                 shape,
                 targets,
                 chunk_size=256,
             )
-        elif getattr(router, "backend", None) != "multitalk":
+            scores = None
+        else:
+            head_index = torch.tensor(
+                valid_heads, dtype=torch.long, device=q.device
+            )
             scores = get_attn_map_with_target(
-                selected_q,
-                selected_k,
+                q_for_scores.index_select(2, head_index),
+                k_for_scores.index_select(2, head_index),
                 shape,
                 targets,
             )
+            per_head_scores = None
     except RuntimeError as exc:
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} heads "
             f"{valid_heads} score collection failed"
         ) from exc
-    if scores is None:
+    if scores is None and per_head_scores is None:
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} heads "
             f"{valid_heads} returned no scores"
         )
-    if int(scores.shape[1]) != video or video % spatial != 0:
+    score_shape = per_head_scores.shape if per_head_scores is not None else scores.shape
+    if int(score_shape[1]) != video or video % spatial != 0:
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} heads "
-            f"{valid_heads} score shape {tuple(scores.shape)} does not match video={video}"
+            f"{valid_heads} score shape {tuple(score_shape)} does not match video={video}"
         )
-    fg = scores[:num_subjects].reshape(num_subjects, router.num_frames, spatial)
-    bg = scores[num_subjects].reshape(router.num_frames, spatial)
-    for head in valid_heads:
-        router.store_ref_loc_head(timestep_idx, int(block_idx), int(head), fg, bg)
+    if per_head_scores is not None:
+        positions = {head: idx for idx, head in enumerate(compute_heads)}
+        for head in valid_heads:
+            position = positions[head]
+            fg = per_head_scores[:num_subjects, :, position].reshape(
+                num_subjects, router.num_frames, spatial
+            )
+            bg = per_head_scores[num_subjects, :, position].reshape(
+                router.num_frames, spatial
+            )
+            router.store_ref_loc_head(
+                timestep_idx, int(block_idx), int(head), fg, bg
+            )
+    else:
+        fg = scores[:num_subjects].reshape(
+            num_subjects, router.num_frames, spatial
+        )
+        bg = scores[num_subjects].reshape(router.num_frames, spatial)
+        for head in valid_heads:
+            router.store_ref_loc_head(
+                timestep_idx, int(block_idx), int(head), fg, bg
+            )
     if len(valid_heads) != len(wanted_heads):
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} stored "
