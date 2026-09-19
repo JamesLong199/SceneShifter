@@ -6,6 +6,7 @@ from sceneshifter.ref_attn import (
     derive_live_fg_from_class_scores_numpy,
     derive_live_fg_from_union_scores,
     get_attn_map_with_target,
+    get_attn_map_with_target_chunked,
     live_bg_from_subject_fg,
     postprocess_live_fg,
 )
@@ -44,6 +45,20 @@ def test_get_attn_map_class_mean_matches_manual():
     assert scores.shape[0] == 2
     # Query 0 is aligned with key 0 (class 0 / FG).
     assert float(scores[0, 0]) > float(scores[1, 0])
+
+
+@pytest.mark.feature
+def test_chunked_ref_scores_match_full_fp32_scores():
+    torch.manual_seed(7)
+    q = torch.randn(1, 12, 2, 4)
+    k = torch.randn(1, 12, 2, 4)
+    targets = torch.tensor([[1.0, 0, 1, 0], [0.0, 1, 0, 1]])
+    full = get_attn_map_with_target(q, k, (3, 2, 2), targets)
+    chunked = get_attn_map_with_target_chunked(
+        q, k, (3, 2, 2), targets, chunk_size=3
+    )
+    assert full is not None and chunked is not None
+    assert torch.allclose(chunked, full, atol=1e-6, rtol=1e-6)
 
 
 @pytest.mark.feature

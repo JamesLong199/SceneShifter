@@ -16,7 +16,7 @@ import torch.nn as nn
 from ..attention import gather_attention, scaled_dot_product
 from ..layouts import S2VTokenLayout
 from ..parity.trace import trace_tensor
-from ..ref_attn import get_attn_map_with_target
+from ..ref_attn import get_attn_map_with_target, get_attn_map_with_target_chunked
 from ..router import FramePromptRouter
 
 _CURRENT_MODULE: contextvars.ContextVar[Optional[nn.Module]] = contextvars.ContextVar(
@@ -637,7 +637,8 @@ def _collect_live_ref_attn(
     v = getattr(module, "_ss_v_for_ref", None)
     score_dtype = (
         torch.float32
-        if getattr(router, "backend", None) == "fantasytalking"
+        if getattr(router, "backend", None)
+        in {"fantasytalking", "wan_s2v", "wan_animate"}
         else (v.dtype if torch.is_tensor(v) else q.dtype)
     )
     q_score = q.to(dtype=score_dtype)
@@ -694,12 +695,23 @@ def _collect_live_ref_attn(
     # Splitting heads into separate kernels changes threshold-boundary values.
     head_index = torch.tensor(valid_heads, dtype=torch.long, device=q.device)
     try:
-        scores = get_attn_map_with_target(
-            q_for_scores.index_select(2, head_index),
-            k_for_scores.index_select(2, head_index),
-            shape,
-            targets,
-        )
+        selected_q = q_for_scores.index_select(2, head_index)
+        selected_k = k_for_scores.index_select(2, head_index)
+        if getattr(router, "backend", None) in {"wan_s2v", "wan_animate"}:
+            scores = get_attn_map_with_target_chunked(
+                selected_q,
+                selected_k,
+                shape,
+                targets,
+                chunk_size=256,
+            )
+        else:
+            scores = get_attn_map_with_target(
+                selected_q,
+                selected_k,
+                shape,
+                targets,
+            )
     except RuntimeError as exc:
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} heads "
