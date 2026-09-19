@@ -424,6 +424,44 @@ def test_scene_mask_ref_loc_q_uses_local_new_scene_rope():
     assert torch.equal(q_ref[:, scene1], (q * 3)[:, scene1])
 
 
+def test_multitalk_scene_collector_receives_local_new_scene_q(monkeypatch):
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["params"]["auto_q_scale"] = False
+    router = FramePromptRouter(
+        cfg, backend="multitalk", patch_height=2, patch_width=2
+    )
+    q = torch.ones(1, 32, 2, 4)
+    module = _Attn()
+    module.frame_prompt_router = router
+    module._ss_timestep = 3
+    module._ss_block_idx = 0
+    module._ss_pass = "cond"
+    module._ss_q_pre_rope = q * 3
+    module._ss_freqs = torch.ones(1)
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_rope_fn = lambda x, grid_sizes, freqs, *args, **kwargs: x
+    captured = {}
+
+    def collect(router, module, q_value, k, timestep_idx, block_idx, pass_type):
+        captured["q"] = q_value
+
+    monkeypatch.setattr(base_adapter, "_collect_live_ref_attn", collect)
+
+    def flash(q, k, v, *args, **kwargs):
+        return q
+
+    scene_masked_official_flash(
+        flash,
+        "flash_attention",
+        module,
+        router,
+        (q, q.clone(), q.clone()),
+        {"k_lens": torch.tensor([32])},
+    )
+    assert torch.equal(captured["q"][:, :12], q[:, :12])
+    assert torch.equal(captured["q"][:, 12:], (q * 3)[:, 12:])
+
+
 def test_talking_i2v_uncond_keeps_official_neg_context():
     cfg = canonical_config()
     cfg["segment_prompt_start_timestep"] = 3
@@ -587,7 +625,7 @@ def test_fantasy_ref_loc_scores_union_fg_in_fp32(monkeypatch):
     assert seen["targets"][0].bool().tolist() == [True, True, False, False]
 
 
-def test_selector_heads_are_collected_in_one_batched_score_call(monkeypatch):
+def test_multitalk_selector_heads_use_memory_safe_individual_calls(monkeypatch):
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["params"] = {
         "mask_type": "ref_attn",
@@ -616,7 +654,7 @@ def test_selector_heads_are_collected_in_one_batched_score_call(monkeypatch):
     module._ss_v_for_ref = torch.zeros(1, 32, 2, 2)
     q = torch.randn(1, 32, 2, 2)
     base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
-    assert seen == [(2, [True, True])]
+    assert seen == [(1, None), (1, None)]
     assert (0, 0, 0) in router._ref_loc_scores
     assert (0, 0, 1) in router._ref_loc_scores
 

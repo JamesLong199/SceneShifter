@@ -701,19 +701,18 @@ def _collect_live_ref_attn(
         "wan_fun_camera",
     }
     backend = getattr(router, "backend", None)
+    individual_scores = None
     try:
         if backend == "multitalk":
-            head_mask = torch.zeros(
-                int(q_for_scores.shape[2]), dtype=torch.bool, device=q.device
-            )
-            head_mask[valid_heads] = True
-            scores = get_attn_map_with_target(
-                q_for_scores,
-                k_for_scores,
-                shape,
-                targets,
-                head_mask=head_mask,
-            )
+            individual_scores = {}
+            for head in valid_heads:
+                individual_scores[head] = get_attn_map_with_target(
+                    q_for_scores[:, :, head : head + 1],
+                    k_for_scores[:, :, head : head + 1],
+                    shape,
+                    targets,
+                )
+            scores = None
             per_head_scores = None
         elif backend in per_head_backends:
             compute_heads = (
@@ -750,18 +749,33 @@ def _collect_live_ref_attn(
             f"{router.backend} ref-attn selector L{int(block_idx)} heads "
             f"{valid_heads} score collection failed"
         ) from exc
-    if scores is None and per_head_scores is None:
+    if scores is None and per_head_scores is None and individual_scores is None:
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} heads "
             f"{valid_heads} returned no scores"
         )
-    score_shape = per_head_scores.shape if per_head_scores is not None else scores.shape
-    if int(score_shape[1]) != video or video % spatial != 0:
-        raise RuntimeError(
-            f"{router.backend} ref-attn selector L{int(block_idx)} heads "
-            f"{valid_heads} score shape {tuple(score_shape)} does not match video={video}"
-        )
-    if per_head_scores is not None:
+    if individual_scores is not None:
+        for head, head_scores in individual_scores.items():
+            if head_scores is None or int(head_scores.shape[1]) != video:
+                raise RuntimeError(
+                    f"{router.backend} ref-attn selector L{int(block_idx)}H{head} "
+                    f"score shape {None if head_scores is None else tuple(head_scores.shape)} "
+                    f"does not match video={video}"
+                )
+            fg = head_scores[:num_subjects].reshape(
+                num_subjects, router.num_frames, spatial
+            )
+            bg = head_scores[num_subjects].reshape(router.num_frames, spatial)
+            router.store_ref_loc_head(
+                timestep_idx, int(block_idx), int(head), fg, bg
+            )
+    elif per_head_scores is not None:
+        score_shape = per_head_scores.shape
+        if int(score_shape[1]) != video or video % spatial != 0:
+            raise RuntimeError(
+                f"{router.backend} ref-attn selector L{int(block_idx)} heads "
+                f"{valid_heads} score shape {tuple(score_shape)} does not match video={video}"
+            )
         positions = {head: idx for idx, head in enumerate(compute_heads)}
         for head in valid_heads:
             position = positions[head]
@@ -775,6 +789,11 @@ def _collect_live_ref_attn(
                 timestep_idx, int(block_idx), int(head), fg, bg
             )
     else:
+        if int(scores.shape[1]) != video or video % spatial != 0:
+            raise RuntimeError(
+                f"{router.backend} ref-attn selector L{int(block_idx)} heads "
+                f"{valid_heads} score shape {tuple(scores.shape)} does not match video={video}"
+            )
         fg = scores[:num_subjects].reshape(
             num_subjects, router.num_frames, spatial
         )
@@ -881,6 +900,11 @@ def scene_masked_official_flash(
     )
 
     q = router.apply_q_scale(q, block)
+    ref_loc_q = (
+        _ref_loc_query_for_scene_mask(module, router, block, q)
+        if getattr(router, "backend", None) == "multitalk"
+        else q
+    )
     trace_tensor(
         "self_q_scaled",
         q,
@@ -1033,7 +1057,9 @@ def scene_masked_official_flash(
         else:
             extra_idx = torch.arange(video_tokens, q.shape[1], device=q.device)
         if extra_idx.numel() == 0:
-            _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
+            _collect_live_ref_attn(
+                router, module, ref_loc_q, k, timestep_idx, block_idx, pass_type
+            )
             trace_tensor(
                 "self_out",
                 out,
@@ -1057,7 +1083,9 @@ def scene_masked_official_flash(
         if isinstance(piece, tuple):
             piece = piece[0]
         out.index_copy_(1, extra_idx, piece.to(dtype=out.dtype))
-    _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
+    _collect_live_ref_attn(
+        router, module, ref_loc_q, k, timestep_idx, block_idx, pass_type
+    )
     trace_tensor(
         "self_out",
         out,
