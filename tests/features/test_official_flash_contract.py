@@ -519,6 +519,37 @@ def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):
     assert seen == {"batch": 1, "value": 1.0}
 
 
+def test_fantasy_ref_loc_scores_union_fg_in_fp32(monkeypatch):
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[0, 0]],
+    }
+    router = FramePromptRouter(
+        cfg, backend="fantasytalking", patch_height=2, patch_width=2
+    )
+    router.subject_fg_masks = torch.zeros(2, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.subject_fg_masks[1, :, 1] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    seen = {}
+
+    def scores(visual_q, ref_k, shape, targets):
+        seen["dtype"] = visual_q.dtype
+        seen["targets"] = targets.clone()
+        return torch.zeros(2, 32)
+
+    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 1, 1, dtype=torch.bfloat16)
+    q = torch.randn(1, 32, 1, 1, dtype=torch.bfloat16)
+    base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
+    assert seen["dtype"] == torch.float32
+    assert tuple(seen["targets"].shape) == (2, 4)
+    assert seen["targets"][0].bool().tolist() == [True, True, False, False]
+
+
 def test_cross_attn_keeps_s2v_extra_tokens():
     cfg = canonical_config()
     cfg["segment_prompt_start_timestep"] = 0

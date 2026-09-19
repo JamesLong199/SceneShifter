@@ -244,3 +244,41 @@ def derive_live_fg_from_class_scores(
                 stacked[int(winning[y, x]), y, x] = 1
         out[:, frame_idx] = torch.from_numpy(stacked.reshape(num_subjects, -1) > 0)
     return out
+
+
+def derive_live_fg_from_union_scores(
+    fg_map: torch.Tensor,
+    bg_map: torch.Tensor,
+    spatial_h: int,
+    spatial_w: int,
+    *,
+    drop_low_percent: float = 20.0,
+    min_component_size: int = 20,
+    hole_size: int = 0,
+) -> Optional[torch.Tensor]:
+    """FantasyTalking live mask: union-FG score minus BG score, then cleanup."""
+    fg = fg_map.detach().float().cpu().numpy()
+    bg = bg_map.detach().float().cpu().numpy()
+    if fg.ndim == 1:
+        fg = fg[None]
+    if bg.ndim == 1:
+        bg = bg[None]
+    if fg.shape != bg.shape or fg.ndim != 2:
+        return None
+    frames, spatial = fg.shape
+    if spatial != int(spatial_h) * int(spatial_w):
+        return None
+    output = []
+    for frame in range(frames):
+        diff = fg[frame] - bg[frame]
+        positive = diff > 0
+        if positive.any() and float(drop_low_percent) > 0:
+            threshold = np.percentile(diff[positive], float(drop_low_percent))
+            mask = ((diff > 0) & (diff > threshold)).astype(np.uint8)
+        else:
+            mask = positive.astype(np.uint8)
+        mask = mask.reshape(int(spatial_h), int(spatial_w))
+        mask = remove_small_components(mask, int(min_component_size))
+        mask = fill_small_holes(mask, int(hole_size))
+        output.append(torch.from_numpy(mask.reshape(-1) > 0))
+    return torch.stack(output, dim=0).unsqueeze(0)

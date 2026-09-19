@@ -25,6 +25,7 @@ from .qscale_scope import (
 )
 from .ref_attn import (
     derive_live_fg_from_class_scores,
+    derive_live_fg_from_union_scores,
     live_bg_from_subject_fg,
     postprocess_live_fg,
 )
@@ -539,6 +540,26 @@ class FramePromptRouter:
         if selectors:
             fg, bg = self.selector_avg_scores(timestep_idx, selectors)
         if fg is None or bg is None:
+            return self.live_bg
+        if self.backend == "fantasytalking":
+            union_fg = fg[0] if fg.ndim == 3 and int(fg.shape[0]) == 1 else fg
+            live_fg = derive_live_fg_from_union_scores(
+                union_fg,
+                bg,
+                self.patch_height,
+                self.patch_width,
+                drop_low_percent=float(
+                    params.get("ref_attn_mask_drop_low_percent", 10.0)
+                ),
+                min_component_size=int(
+                    params.get("ref_attn_mask_min_component_size", 20)
+                ),
+                hole_size=int(params.get("ref_attn_mask_hole_size", 0)),
+            )
+            if live_fg is None:
+                return self.live_bg
+            self.live_subject_fg = live_fg
+            self.live_bg = live_bg_from_subject_fg(live_fg)
             return self.live_bg
         return self.update_live_mask_from_class_scores(
             fg,

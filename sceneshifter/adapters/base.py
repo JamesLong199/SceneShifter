@@ -621,9 +621,14 @@ def _collect_live_ref_attn(
             f"q/k lengths {int(q.shape[1])}/{int(k.shape[1])}, expected at least "
             f"{video}/{spatial}"
         )
-    # Official get_attn_map_with_target runs q/k as v.dtype (usually bf16).
+    # Most Wan ports score in v.dtype; FantasyTalking explicitly promotes
+    # selector Q/K to FP32 before matmul.
     v = getattr(module, "_ss_v_for_ref", None)
-    score_dtype = v.dtype if torch.is_tensor(v) else q.dtype
+    score_dtype = (
+        torch.float32
+        if getattr(router, "backend", None) == "fantasytalking"
+        else (v.dtype if torch.is_tensor(v) else q.dtype)
+    )
     q_score = q.to(dtype=score_dtype)
     k_score = k.to(dtype=score_dtype)
     if (
@@ -633,7 +638,21 @@ def _collect_live_ref_attn(
         # Native Fun Camera collects localization from the conditional CFG row.
         q_score = q_score[-1:]
         k_score = k_score[-1:]
-    targets = _ref_target_masks(router, spatial, q.device, score_dtype)
+    if getattr(router, "backend", None) == "fantasytalking":
+        static_bg = getattr(router, "static_bg", None)
+        if static_bg is None:
+            targets = None
+        else:
+            bg_ref = static_bg[0].to(device=q.device, dtype=torch.bool)
+            targets = torch.stack(
+                [
+                    (~bg_ref).to(dtype=score_dtype),
+                    bg_ref.to(dtype=score_dtype),
+                ],
+                dim=0,
+            )
+    else:
+        targets = _ref_target_masks(router, spatial, q.device, score_dtype)
     if targets is None:
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} has no target masks"
