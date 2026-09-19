@@ -1242,8 +1242,15 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     model_args = sanity_check_args(parser.parse_args(argv))
     device = torch.device("cuda")
     sampler = HunyuanVideoSampler.from_pretrained(model_args.ckpt, args=model_args, device=device)
-    from sceneshifter.adapters.hunyuan_avatar import install_hunyuan_prompt_routing
+    from hymm_sp.vae.vae import DiagonalGaussianDistribution  # type: ignore
+    from sceneshifter.adapters.hunyuan_avatar import (
+        install_hunyuan_prompt_routing,
+        install_hunyuan_seeded_vae_sampling,
+    )
 
+    install_hunyuan_seeded_vae_sampling(
+        sampler, DiagonalGaussianDistribution, int(unified.get("base_seed", 43))
+    )
     install_hunyuan_prompt_routing(sampler.pipeline, router, routing, meta)
     bound = _inject(sampler, router, "hunyuan_avatar")
     print(

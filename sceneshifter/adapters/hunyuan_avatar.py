@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import math
 import sys
 import types
@@ -27,6 +28,9 @@ from .base import (
 
 HY_BLOCK_NAMES = {"DoubleStreamBlock", "SingleStreamBlock"}
 PROMPT_PREFIX = "Authentic, Realistic, Natural, High-quality, Lens-Fixed, "
+_HY_VAE_GENERATOR: contextvars.ContextVar[Optional[torch.Generator]] = (
+    contextvars.ContextVar("sceneshifter_hunyuan_vae_generator", default=None)
+)
 
 
 def _empty(device: torch.device) -> torch.Tensor:
@@ -109,6 +113,41 @@ def hunyuan_multiface_mask(
     if return_details:
         return output, details
     return output
+
+
+def install_hunyuan_seeded_vae_sampling(
+    sampler: Any,
+    distribution_cls: type,
+    seed: int,
+) -> None:
+    """Seed the two pre-denoising VAE posterior samples without editing HVA."""
+    if not getattr(distribution_cls, "_ss_seeded_sample", False):
+        original_sample = distribution_cls.sample
+
+        def sample(self, generator=None):
+            active = _HY_VAE_GENERATOR.get()
+            return original_sample(
+                self, generator=active if generator is None and active is not None else generator
+            )
+
+        distribution_cls.sample = sample
+        distribution_cls._ss_seeded_sample = True
+    if getattr(sampler, "_ss_seeded_vae_predict", False):
+        return
+    original_predict = sampler.predict
+
+    def predict(self, *args, **kwargs):
+        device = getattr(self, "device", torch.device("cuda"))
+        generator = torch.Generator(device=device).manual_seed(int(seed))
+        token = _HY_VAE_GENERATOR.set(generator)
+        try:
+            return original_predict(*args, **kwargs)
+        finally:
+            _HY_VAE_GENERATOR.reset(token)
+
+    sampler.predict = types.MethodType(predict, sampler)
+    sampler._ss_seeded_vae_predict = True
+    print(f"[hunyuan-adapter] seeded VAE posterior sampling seed={int(seed)}", flush=True)
 
 
 def _resize_frame_mask(mask: torch.Tensor, frames: int, spatial: int) -> torch.Tensor:

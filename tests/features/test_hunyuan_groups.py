@@ -7,6 +7,7 @@ from sceneshifter.adapters.hunyuan_avatar import (
     _fg_maps,
     _resize_center_crop_mask,
     hunyuan_multiface_mask,
+    install_hunyuan_seeded_vae_sampling,
 )
 from sceneshifter.layouts import HunyuanMMDiTLayout
 from sceneshifter.router import FramePromptRouter
@@ -167,3 +168,23 @@ def test_hunyuan_multiface_mask_unions_all_detections():
     assert bool(mask[0, 0, 0, 7, 7])
     assert not bool(mask[0, 0, 0, 4, 4])
     assert details[0]["face_count"] == 2
+
+
+def test_hunyuan_vae_posterior_sampling_repeats_from_dedicated_seed():
+    class Distribution:
+        def sample(self, generator=None):
+            return torch.randn(4, generator=generator)
+
+    class Sampler:
+        device = torch.device("cpu")
+
+        def predict(self):
+            return Distribution().sample(), Distribution().sample()
+
+    sampler = Sampler()
+    install_hunyuan_seeded_vae_sampling(sampler, Distribution, seed=43)
+    first = sampler.predict()
+    second = sampler.predict()
+    assert torch.equal(first[0], second[0])
+    assert torch.equal(first[1], second[1])
+    assert not torch.equal(first[0], first[1])
