@@ -5,6 +5,7 @@ import torch.nn as nn
 from sceneshifter.adapters import base as base_adapter
 from sceneshifter.adapters.base import (
     _grid_fhw,
+    _maybe_update_spatial,
     _ref_loc_query_for_scene_mask,
     _rerope_queries,
     _should_local_rerope,
@@ -63,6 +64,26 @@ def test_grid_fhw_flattens_s2v_nonscalar_row():
     grid = [torch.tensor([[21, 44, 64], [21, 44, 64]])]
     assert _grid_fhw(grid, router) == (21, 44, 64)
     assert _grid_fhw(torch.tensor([[8, 2, 2]]), router) == (8, 2, 2)
+
+
+def test_s2v_nested_grid_does_not_infer_spatial_from_extra_tokens():
+    router = FramePromptRouter(
+        canonical_config(num_frames=21),
+        backend="wan_s2v",
+        patch_height=44,
+        patch_width=64,
+    )
+    grid = torch.tensor([[21, 44, 64]])
+    module = _Attn()
+    module._ss_grid_sizes = [[torch.zeros_like(grid), grid, grid]]
+    q = torch.zeros(1, 61952, 1, 1)
+    assert _grid_fhw(module._ss_grid_sizes, router) == (21, 44, 64)
+    _maybe_update_spatial(router, module, q)
+    assert (router.patch_height, router.patch_width, router.spatial_tokens) == (
+        44,
+        64,
+        2816,
+    )
 
 
 def test_unrestricted_flash_keeps_k_lens():

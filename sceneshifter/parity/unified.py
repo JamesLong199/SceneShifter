@@ -1198,8 +1198,13 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     from hymm_sp.data_kits.audio_dataset import VideoAudioTextLoaderVal  # type: ignore
     from hymm_sp.data_kits.face_align import AlignImage  # type: ignore
     from hymm_sp.sample_inference_audio import HunyuanVideoSampler  # type: ignore
+    import hymm_sp.sample_inference_audio as hunyuan_inference  # type: ignore
     from transformers import AutoFeatureExtractor, WhisperModel
     import argparse
+    from sceneshifter.adapters.hunyuan_avatar import hunyuan_multiface_mask
+
+    hunyuan_inference.get_facemask = hunyuan_multiface_mask
+    print("[parity-unified] Hunyuan multi-face union mask enabled", flush=True)
 
     image = _resolve_media(root, meta.get("cond_image"))
     audio = meta.get("cond_audio")

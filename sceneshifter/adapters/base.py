@@ -116,8 +116,7 @@ def _maybe_update_spatial(router: FramePromptRouter, module: nn.Module, q: torch
     if grid is None:
         return
     try:
-        row = grid[0]
-        gh, gw = int(row[1]), int(row[2])
+        _frames, gh, gw = _grid_fhw(grid, router)
         spatial = gh * gw
         if spatial <= 0 or spatial == router.spatial_tokens:
             return
@@ -165,6 +164,10 @@ def _maybe_update_spatial(router: FramePromptRouter, module: nn.Module, q: torch
             resized = torch.nn.functional.interpolate(src, size=spatial, mode="nearest")
             router.live_subject_fg = resized.reshape(n_subj, frames, spatial) > 0.5
     except Exception:
+        if getattr(router, "backend", None) == "wan_s2v":
+            # S2V has reference/FramePack extras; q_len // noisy_frames is not
+            # a valid spatial size.
+            return
         if q.ndim >= 2 and router.num_frames > 0:
             guessed = int(q.shape[1]) // int(router.num_frames)
             if guessed > 0:
@@ -181,28 +184,45 @@ def _extract_qkv(args: Tuple[Any, ...], kwargs: Dict[str, Any]):
     return q, k, v, used_kw
 
 
-def _as_int(value: Any) -> int:
-    if torch.is_tensor(value):
-        flat = value.detach().reshape(-1)
-        if flat.numel() == 0:
-            raise ValueError("empty tensor")
-        return int(flat[0].item())
-    if isinstance(value, (list, tuple)):
-        return _as_int(value[0])
-    return int(value)
-
-
 def _grid_fhw(grid: Any, router: FramePromptRouter) -> Tuple[int, int, int]:
-    """S2V grid_sizes[0] can be a non-scalar tensor; flatten to (F, H, W)."""
+    """Resolve (F,H,W), including S2V's nested zero/noisy/reference grids."""
     fallback = (int(router.num_frames), int(router.patch_height), int(router.patch_width))
     if grid is None:
         return fallback
+
+    def triples(value: Any) -> List[Tuple[int, int, int]]:
+        if torch.is_tensor(value):
+            flat = value.detach().reshape(-1)
+            if int(flat.numel()) < 3:
+                return []
+            usable = int(flat.numel()) - int(flat.numel()) % 3
+            return [
+                (int(row[0].item()), int(row[1].item()), int(row[2].item()))
+                for row in flat[:usable].reshape(-1, 3)
+            ]
+        if isinstance(value, (list, tuple)):
+            found: List[Tuple[int, int, int]] = []
+            for item in value:
+                found.extend(triples(item))
+            return found
+        return []
+
     try:
-        row = grid[0]
-        if torch.is_tensor(row) and int(row.numel()) >= 3:
-            flat = row.detach().reshape(-1)
-            return int(flat[0].item()), int(flat[1].item()), int(flat[2].item())
-        return (_as_int(row[0]), _as_int(row[1]), _as_int(row[2]))
+        candidates = [
+            item for item in triples(grid) if item[0] > 0 and item[1] > 0 and item[2] > 0
+        ]
+        if not candidates:
+            return fallback
+        for item in candidates:
+            if (
+                item[0] == int(router.num_frames)
+                and item[1] * item[2] == int(router.spatial_tokens)
+            ):
+                return item
+        for item in candidates:
+            if item[0] == int(router.num_frames):
+                return item
+        return candidates[0]
     except Exception:
         return fallback
 

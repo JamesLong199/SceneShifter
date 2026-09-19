@@ -33,6 +33,84 @@ def _empty(device: torch.device) -> torch.Tensor:
     return torch.empty(0, dtype=torch.long, device=device)
 
 
+def _expanded_face_box(bbox, width: int, height: int, area: float) -> List[int]:
+    x1, y1, box_width, box_height = [float(value) for value in bbox]
+    x2, y2 = x1 + box_width, y1 + box_height
+    center_x, center_y = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    expanded_width = (x2 - x1) * float(area)
+    expanded_height = (y2 - y1) * float(area)
+    return [
+        max(int(center_x - expanded_width / 2.0), 0),
+        max(int(center_y - expanded_height / 2.0), 0),
+        min(int(center_x + expanded_width / 2.0), int(width)),
+        min(int(center_y + expanded_height / 2.0), int(height)),
+    ]
+
+
+def hunyuan_multiface_mask(
+    ref_image: torch.Tensor,
+    align_instance,
+    area: float = 1.25,
+    return_details: bool = False,
+):
+    """Match HVA exp: union every detected face instead of keeping the largest."""
+    batch, frames, _channels, height, width = ref_image.shape
+    images = (
+        ref_image.permute(0, 1, 3, 4, 2)
+        .reshape(batch * frames, height, width, -1)
+        .detach()
+        .cpu()
+        .numpy()
+        .astype(np.uint8)
+    )
+    masks = []
+    details = []
+    for image in images:
+        _landmarks, scores, boxes = align_instance(
+            image[:, :, [2, 1, 0]], maxface=False
+        )
+        fallback = len(boxes) == 0
+        if fallback:
+            boxes, scores = [[0, 0, width, height]], [None]
+        union = np.zeros((height, width), dtype=np.uint8)
+        records = []
+        for face_index, (box, score) in enumerate(zip(boxes, scores)):
+            expanded = (
+                [0, 0, width, height]
+                if fallback
+                else _expanded_face_box(box, width, height, area)
+            )
+            x1, y1, x2, y2 = expanded
+            union[y1:y2, x1:x2] = 1
+            records.append(
+                {
+                    "face_index": face_index,
+                    "score": (
+                        None
+                        if score is None
+                        else float(np.asarray(score).reshape(-1)[0])
+                    ),
+                    "bbox_xywh": [float(value) for value in box],
+                    "expanded_box_xyxy": expanded,
+                }
+            )
+        masks.append(torch.from_numpy(union))
+        details.append(
+            {
+                "width": width,
+                "height": height,
+                "face_count": 0 if fallback else len(records),
+                "fallback_full_frame": fallback,
+                "faces": records,
+            }
+        )
+    output = torch.stack(masks).reshape(batch, frames, height, width)
+    output = output[:, None].to(device=ref_image.device, dtype=ref_image.dtype)
+    if return_details:
+        return output, details
+    return output
+
+
 def _resize_frame_mask(mask: torch.Tensor, frames: int, spatial: int) -> torch.Tensor:
     value = mask.to(dtype=torch.float32)
     if value.numel() == frames * spatial:

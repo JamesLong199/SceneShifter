@@ -6,6 +6,7 @@ from sceneshifter.adapters.hunyuan_avatar import (
     build_hunyuan_groups,
     _fg_maps,
     _resize_center_crop_mask,
+    hunyuan_multiface_mask,
 )
 from sceneshifter.layouts import HunyuanMMDiTLayout
 from sceneshifter.router import FramePromptRouter
@@ -147,3 +148,22 @@ def test_hunyuan_cfg_batch_updates_live_mask_before_row_routing(
     assert events[0] == ("update", "cond")
     assert events.count(("update", "cond")) == 1
     assert events[1][0] == "groups"
+
+
+def test_hunyuan_multiface_mask_unions_all_detections():
+    calls = []
+
+    def detector(image, maxface=True):
+        calls.append(maxface)
+        return None, [0.9, 0.8], [[0, 0, 2, 2], [6, 6, 2, 2]]
+
+    image = torch.zeros(1, 1, 3, 8, 8)
+    mask, details = hunyuan_multiface_mask(
+        image, detector, area=1.0, return_details=True
+    )
+    assert calls == [False]
+    assert tuple(mask.shape) == (1, 1, 1, 8, 8)
+    assert bool(mask[0, 0, 0, 0, 0])
+    assert bool(mask[0, 0, 0, 7, 7])
+    assert not bool(mask[0, 0, 0, 4, 4])
+    assert details[0]["face_count"] == 2
