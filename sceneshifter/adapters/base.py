@@ -616,15 +616,15 @@ def _collect_live_ref_attn(
     params = _ref_attn_schedule_params(router)
     if params is None:
         return
-    publish_animate = (
-        getattr(router, "backend", None) == "wan_animate"
+    publish_after_cond = (
+        getattr(router, "backend", None) in {"infinitetalk", "wan_animate"}
         and pass_type == "cond"
         and int(block_idx)
         == int(getattr(router, "_ss_num_self_layers", 0) or 0) - 1
     )
     wanted_heads = _wanted_ref_heads(params, block_idx, int(q.shape[2]))
     if not wanted_heads:
-        if publish_animate:
+        if publish_after_cond:
             router.complete_denoising_step()
         return
     spatial = int(router.spatial_tokens)
@@ -805,7 +805,7 @@ def _collect_live_ref_attn(
             f"{router.backend} ref-attn selector L{int(block_idx)} stored "
             f"{len(valid_heads)}/{len(wanted_heads)} heads"
         )
-    if publish_animate:
+    if publish_after_cond:
         router.complete_denoising_step()
 
 
