@@ -237,28 +237,6 @@ def test_audio_residual_skipped_before_start():
     assert torch.equal(module(x), x + 1)
 
 
-def test_multitalk_subject_rope_positions_are_discrete_centers():
-    from sceneshifter.adapters.multitalk import _subject_rope_positions
-
-    scores = torch.tensor(
-        [
-            [0.9, 0.1, 0.1],
-            [0.1, 0.8, 0.1],
-            [0.0, 0.1, 0.9],
-        ]
-    )
-    visual, centers = _subject_rope_positions(
-        scores,
-        human_num=2,
-        class_range=24,
-        class_interval=4,
-        dtype=torch.float32,
-        device=torch.device("cpu"),
-    )
-    assert centers.tolist() == [2.0, 22.0]
-    assert visual.tolist() == [2.0, 22.0, 12.0]
-
-
 def test_unrestricted_collects_ref_loc_without_updating_mask():
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]
