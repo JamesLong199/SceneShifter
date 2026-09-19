@@ -190,6 +190,7 @@ def get_attn_map_with_target_per_head_chunked(
     ref_target_masks: torch.Tensor,
     *,
     chunk_size: int = 256,
+    select_masked_keys: bool = False,
 ) -> Optional[torch.Tensor]:
     """FP32 chunked class scores preserving the native per-head axis."""
     if torch.is_tensor(shape):
@@ -211,7 +212,11 @@ def get_attn_map_with_target_per_head_chunked(
         probs = (logits * (query.shape[-1] ** -0.5)).softmax(-1)
         classes = []
         for class_idx, target in enumerate(targets):
-            per_head = (probs * target.view(1, 1, 1, -1)).sum(-1)
+            if select_masked_keys:
+                selected = target > 0.5
+                per_head = probs[..., selected].sum(-1)
+            else:
+                per_head = (probs * target.view(1, 1, 1, -1)).sum(-1)
             per_head = per_head / denoms[class_idx]
             classes.append(per_head[0].permute(1, 0))
         chunks.append(torch.stack(classes, dim=0))

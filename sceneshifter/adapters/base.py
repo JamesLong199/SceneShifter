@@ -729,6 +729,7 @@ def _collect_live_ref_attn(
                 shape,
                 targets,
                 chunk_size=256,
+                select_masked_keys=backend in {"wan_s2v", "wan_animate"},
             )
             scores = None
         else:

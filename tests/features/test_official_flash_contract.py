@@ -538,7 +538,14 @@ def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):
     router.static_bg = ~router.subject_fg_masks.any(0)
     seen = {}
 
-    def scores(visual_q, ref_k, shape, targets, chunk_size=256):
+    def scores(
+        visual_q,
+        ref_k,
+        shape,
+        targets,
+        chunk_size=256,
+        select_masked_keys=False,
+    ):
         seen["batch"] = int(visual_q.shape[0])
         seen["value"] = float(visual_q[0, 0, 0, 0])
         return torch.zeros(2, 32, visual_q.shape[2])

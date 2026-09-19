@@ -78,6 +78,31 @@ def test_chunked_per_head_scores_match_full_per_head():
 
 
 @pytest.mark.feature
+def test_chunked_masked_key_reduction_matches_wan_native_order():
+    torch.manual_seed(13)
+    q = torch.randn(1, 8, 2, 4)
+    k = torch.randn(1, 8, 2, 4)
+    targets = torch.tensor([[1.0, 0, 1, 0], [0.0, 1, 0, 1]])
+    actual = get_attn_map_with_target_per_head_chunked(
+        q,
+        k,
+        (2, 2, 2),
+        targets,
+        chunk_size=8,
+        select_masked_keys=True,
+    )
+    logits = torch.einsum("bqhd,bkhd->bhqk", q.float(), k[:, :4].float())
+    probs = (logits * (4**-0.5)).softmax(-1)
+    expected = []
+    for target in targets:
+        selected = target.bool()
+        per_head = probs[..., selected].sum(-1) / selected.sum()
+        expected.append(per_head[0].permute(1, 0))
+    assert actual is not None
+    assert torch.equal(actual, torch.stack(expected))
+
+
+@pytest.mark.feature
 def test_argmax_live_mask_uses_bg_class():
     fg = torch.zeros(1, 1, 4)
     bg = torch.zeros(1, 4)
