@@ -693,10 +693,25 @@ def _collect_live_ref_attn(
         valid_heads.append(int(head))
     # Native ports aggregate every requested head in one batched score call.
     # Splitting heads into separate kernels changes threshold-boundary values.
-    head_index = torch.tensor(valid_heads, dtype=torch.long, device=q.device)
     try:
-        selected_q = q_for_scores.index_select(2, head_index)
-        selected_k = k_for_scores.index_select(2, head_index)
+        if getattr(router, "backend", None) == "multitalk":
+            head_mask = torch.zeros(
+                int(q_for_scores.shape[2]), dtype=torch.bool, device=q.device
+            )
+            head_mask[valid_heads] = True
+            scores = get_attn_map_with_target(
+                q_for_scores,
+                k_for_scores,
+                shape,
+                targets,
+                head_mask=head_mask,
+            )
+        else:
+            head_index = torch.tensor(
+                valid_heads, dtype=torch.long, device=q.device
+            )
+            selected_q = q_for_scores.index_select(2, head_index)
+            selected_k = k_for_scores.index_select(2, head_index)
         if getattr(router, "backend", None) in {"wan_s2v", "wan_animate"}:
             scores = get_attn_map_with_target_chunked(
                 selected_q,
@@ -705,7 +720,7 @@ def _collect_live_ref_attn(
                 targets,
                 chunk_size=256,
             )
-        else:
+        elif getattr(router, "backend", None) != "multitalk":
             scores = get_attn_map_with_target(
                 selected_q,
                 selected_k,

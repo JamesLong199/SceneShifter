@@ -597,8 +597,13 @@ def test_selector_heads_are_collected_in_one_batched_score_call(monkeypatch):
     router.static_bg = ~router.subject_fg_masks.any(0)
     seen = []
 
-    def scores(visual_q, ref_k, shape, targets):
-        seen.append(int(visual_q.shape[2]))
+    def scores(visual_q, ref_k, shape, targets, head_mask=None):
+        seen.append(
+            (
+                int(visual_q.shape[2]),
+                None if head_mask is None else head_mask.tolist(),
+            )
+        )
         return torch.zeros(2, 32)
 
     monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
@@ -607,7 +612,7 @@ def test_selector_heads_are_collected_in_one_batched_score_call(monkeypatch):
     module._ss_v_for_ref = torch.zeros(1, 32, 2, 2)
     q = torch.randn(1, 32, 2, 2)
     base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
-    assert seen == [2]
+    assert seen == [(2, [True, True])]
     assert (0, 0, 0) in router._ref_loc_scores
     assert (0, 0, 1) in router._ref_loc_scores
 
