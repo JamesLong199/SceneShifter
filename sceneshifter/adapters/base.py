@@ -617,7 +617,7 @@ def _collect_live_ref_attn(
     if params is None:
         return
     publish_after_cond = (
-        getattr(router, "backend", None) in {"infinitetalk", "wan_animate"}
+        getattr(router, "backend", None) == "wan_animate"
         and pass_type == "cond"
         and int(block_idx)
         == int(getattr(router, "_ss_num_self_layers", 0) or 0) - 1

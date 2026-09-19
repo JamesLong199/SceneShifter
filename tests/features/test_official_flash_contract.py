@@ -321,7 +321,7 @@ def test_freeze_live_mask_still_collects_scores():
 
 
 @pytest.mark.parametrize(
-    "backend", ["infinitetalk", "wan_s2v", "wan_animate", "wan_fun_camera"]
+    "backend", ["wan_s2v", "wan_animate", "wan_fun_camera"]
 )
 def test_ref_scores_publish_only_after_complete_step(backend):
     router = FramePromptRouter(
@@ -337,15 +337,14 @@ def test_ref_scores_publish_only_after_complete_step(backend):
     assert router._pending_ref_loc_scores == {}
 
 
-@pytest.mark.parametrize("backend", ["infinitetalk", "wan_animate"])
-def test_talking_or_animate_publishes_scores_at_last_cond_layer(backend):
+def test_animate_publishes_scores_at_last_cond_layer():
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["params"] = {
         "mask_type": "ref_attn",
         "ref_attn_mask_selectors": [[0, 0]],
     }
     router = FramePromptRouter(
-        cfg, backend=backend, patch_height=2, patch_width=2
+        cfg, backend="wan_animate", patch_height=2, patch_width=2
     )
     router._ss_num_self_layers = 2
     router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
