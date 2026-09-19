@@ -607,14 +607,12 @@ def test_fantasy_ref_loc_scores_union_fg_in_fp32(monkeypatch):
     router.static_bg = ~router.subject_fg_masks.any(0)
     seen = {}
 
-    def scores(visual_q, ref_k, shape, targets, chunk_size=256):
+    def scores(visual_q, ref_k, shape, targets):
         seen["dtype"] = visual_q.dtype
         seen["targets"] = targets.clone()
-        return torch.zeros(2, 32, visual_q.shape[2])
+        return torch.zeros(2, 32)
 
-    monkeypatch.setattr(
-        base_adapter, "get_attn_map_with_target_per_head_chunked", scores
-    )
+    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
     module = _Attn()
     module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
     module._ss_v_for_ref = torch.zeros(1, 32, 1, 1, dtype=torch.bfloat16)

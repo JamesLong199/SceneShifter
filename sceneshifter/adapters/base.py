@@ -695,7 +695,6 @@ def _collect_live_ref_attn(
             )
         valid_heads.append(int(head))
     per_head_backends = {
-        "fantasytalking",
         "wan_s2v",
         "wan_animate",
         "wan_fun_camera",
