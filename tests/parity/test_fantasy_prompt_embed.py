@@ -64,6 +64,20 @@ def test_encode_prompt_hook_captures_null_and_segments():
     assert router.null_text_embeddings is neg
 
 
+def test_text_capture_is_noop_when_routing_disabled():
+    from sceneshifter.parity.unified import _capture_null_context
+
+    class Pipe:
+        def __init__(self):
+            self.encode_prompt = lambda prompt: prompt
+
+    pipe = Pipe()
+    original = pipe.encode_prompt
+    _install_encode_prompt_hook(pipe, None, {})
+    _capture_null_context(pipe, None)
+    assert pipe.encode_prompt is original
+
+
 def test_thread_timestep_zeros_audio_scale_before_start():
     cfg = canonical_config()
     cfg["audio_start_timestep"] = 15

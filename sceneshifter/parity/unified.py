@@ -214,6 +214,8 @@ def _commit_text_embeddings(
 
 def _install_encode_prompt_hook(pipeline: Any, router: Any, routing: Dict[str, Any]) -> None:
     """Capture official DiffSynth null context and encode segments after T5 is onloaded."""
+    if router is None:
+        return
     original = getattr(pipeline, "encode_prompt", None)
     if original is None or getattr(pipeline, "_ss_encode_prompt_hooked", False):
         return
@@ -393,6 +395,8 @@ class _TextEncoderProxy:
 
 
 def _capture_null_context(pipeline: Any, router: Any) -> None:
+    if router is None:
+        return
     _install_encode_prompt_hook(pipeline, router, getattr(router, "config", {}) or {})
     encoder = getattr(pipeline, "text_encoder", None)
     if encoder is None or not callable(encoder) or getattr(encoder, "_ss_null_captured", False):
