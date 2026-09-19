@@ -641,7 +641,7 @@ def _collect_live_ref_attn(
     score_dtype = (
         torch.float32
         if getattr(router, "backend", None)
-        in {"fantasytalking", "wan_s2v", "wan_animate"}
+        in {"fantasytalking", "wan_s2v"}
         else (v.dtype if torch.is_tensor(v) else q.dtype)
     )
     q_score = q.to(dtype=score_dtype)
@@ -696,13 +696,12 @@ def _collect_live_ref_attn(
         valid_heads.append(int(head))
     per_head_backends = {
         "wan_s2v",
-        "wan_animate",
         "wan_fun_camera",
     }
     backend = getattr(router, "backend", None)
     individual_scores = None
     try:
-        if backend == "multitalk":
+        if backend in {"multitalk", "wan_animate"}:
             individual_scores = {}
             for head in valid_heads:
                 individual_scores[head] = get_attn_map_with_target(

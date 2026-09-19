@@ -657,7 +657,7 @@ def test_multitalk_selector_heads_use_memory_safe_individual_calls(monkeypatch):
     assert (0, 0, 1) in router._ref_loc_scores
 
 
-def test_animate_computes_all_heads_then_stores_selected(monkeypatch):
+def test_animate_uses_memory_safe_model_dtype_selector_calls(monkeypatch):
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["params"] = {
         "mask_type": "ref_attn",
@@ -672,19 +672,17 @@ def test_animate_computes_all_heads_then_stores_selected(monkeypatch):
     router.static_bg = ~router.subject_fg_masks.any(0)
     seen = []
 
-    def scores(visual_q, ref_k, shape, targets, chunk_size=256):
-        seen.append(int(visual_q.shape[2]))
-        return torch.zeros(2, 32, visual_q.shape[2])
+    def scores(visual_q, ref_k, shape, targets):
+        seen.append((int(visual_q.shape[2]), visual_q.dtype))
+        return torch.zeros(2, 32)
 
-    monkeypatch.setattr(
-        base_adapter, "get_attn_map_with_target_per_head_chunked", scores
-    )
+    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
     module = _Attn()
     module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
-    module._ss_v_for_ref = torch.zeros(1, 32, 4, 2)
+    module._ss_v_for_ref = torch.zeros(1, 32, 4, 2, dtype=torch.bfloat16)
     q = torch.randn(1, 32, 4, 2)
     base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
-    assert seen == [4]
+    assert seen == [(1, torch.bfloat16), (1, torch.bfloat16)]
     assert (0, 0, 2) in router._pending_ref_loc_scores
     assert (0, 0, 3) in router._pending_ref_loc_scores
 
