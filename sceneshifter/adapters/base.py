@@ -602,8 +602,16 @@ def _collect_live_ref_attn(
     params = _ref_attn_schedule_params(router)
     if params is None:
         return
+    publish_animate = (
+        getattr(router, "backend", None) == "wan_animate"
+        and pass_type == "cond"
+        and int(block_idx)
+        == int(getattr(router, "_ss_num_self_layers", 0) or 0) - 1
+    )
     wanted_heads = _wanted_ref_heads(params, block_idx, int(q.shape[2]))
     if not wanted_heads:
+        if publish_animate:
+            router.complete_denoising_step()
         return
     spatial = int(router.spatial_tokens)
     video = int(router.num_frames) * spatial
@@ -659,6 +667,8 @@ def _collect_live_ref_attn(
         fg = scores[:num_subjects].reshape(num_subjects, router.num_frames, spatial)
         bg = scores[num_subjects].reshape(router.num_frames, spatial)
         router.store_ref_loc_head(timestep_idx, int(block_idx), int(head), fg, bg)
+    if publish_animate:
+        router.complete_denoising_step()
 
 
 def _query_indices(
@@ -1239,7 +1249,7 @@ def thread_timestep(model: Any) -> None:
             if (
                 stepped
                 and getattr(router, "backend", None)
-                in {"wan_s2v", "wan_animate", "wan_fun_camera"}
+                in {"wan_s2v", "wan_fun_camera"}
             ):
                 router.complete_denoising_step()
             if (

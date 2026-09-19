@@ -327,6 +327,32 @@ def test_ref_scores_publish_only_after_complete_step(backend):
     assert router._pending_ref_loc_scores == {}
 
 
+def test_animate_publishes_selector_scores_at_last_cond_layer():
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[0, 0]],
+    }
+    router = FramePromptRouter(
+        cfg, backend="wan_animate", patch_height=2, patch_width=2
+    )
+    router._ss_num_self_layers = 2
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 1, 2)
+    q = torch.randn(1, 32, 1, 2)
+
+    base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
+    assert (0, 0, 0) in router._pending_ref_loc_scores
+    assert (0, 0, 0) not in router._ref_loc_scores
+    base_adapter._collect_live_ref_attn(router, module, q, q, 0, 1, "cond")
+    assert router._pending_ref_loc_scores == {}
+    assert (0, 0, 0) in router._ref_loc_scores
+
+
 def test_collect_skips_s2v_grid_mask_mismatch():
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]

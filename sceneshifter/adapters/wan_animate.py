@@ -87,6 +87,8 @@ class WanAnimateAdapter(Adapter):
 
     def inject(self, model: Any, router: Optional[FramePromptRouter]) -> List[Any]:
         self_mods, cross_mods = find_attention_modules(model)
+        if router is not None:
+            router._ss_num_self_layers = len(self_mods)
         bound = [wrap_self_attention(m, router) for m in self_mods]
         bound.extend(
             wrap_animate_cross_attention(m, router)
