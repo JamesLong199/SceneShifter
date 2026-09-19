@@ -332,6 +332,17 @@ def test_fun_clip_image_uses_uncropped_cond():
     assert 'meta.get("prompt")' in src
 
 
+def test_fantasy_auto_bucket_handles_null_image_size(tmp_path):
+    from PIL import Image
+
+    from sceneshifter.parity.unified import _resize_fantasy_image
+
+    path = tmp_path / "three_by_two.png"
+    Image.new("RGB", (300, 200)).save(path)
+    resized = _resize_fantasy_image(str(path), None)
+    assert resized.size == (768, 512)
+
+
 def test_offload_dit_before_vae_moves_noise_model():
     from sceneshifter.parity.unified import _offload_dit_before_vae
 

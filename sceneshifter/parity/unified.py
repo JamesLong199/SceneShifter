@@ -772,6 +772,34 @@ def _mux_fantasy_audio(video_mp4: Path, audio_path: str, dest: Path) -> None:
     shutil.copy2(video_mp4, dest)
 
 
+def _resize_fantasy_image(image_path: str, image_size: Any):
+    """Match FantasyTalking exp auto buckets without modifying official utils."""
+    from PIL import Image
+
+    if image_size is not None:
+        from utils import resize_image_by_longest_edge  # type: ignore
+
+        return resize_image_by_longest_edge(image_path, int(image_size))
+    buckets = {
+        "1:1": (640, 640),
+        "2:3": (512, 768),
+        "3:2": (768, 512),
+        "4:3": (768, 576),
+        "3:4": (576, 768),
+    }
+    image = Image.open(image_path).convert("RGB")
+    ratio = float(image.width) / float(image.height)
+    label, (width, height) = min(
+        buckets.items(),
+        key=lambda item: abs(ratio - float(item[1][0]) / float(item[1][1])),
+    )
+    print(
+        f"[parity-unified] Fantasy auto bucket {label} -> {width}x{height}",
+        flush=True,
+    )
+    return image.resize((width, height), Image.LANCZOS)
+
+
 def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None:
     import librosa
     import torch
@@ -786,7 +814,7 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     from diffsynth import ModelManager, WanVideoPipeline  # type: ignore
     from model import FantasyTalkingAudioConditionModel  # type: ignore
     from transformers import Wav2Vec2Model, Wav2Vec2Processor
-    from utils import get_audio_features, resize_image_by_longest_edge, save_video  # type: ignore
+    from utils import get_audio_features, save_video  # type: ignore
 
     wan_dir = unified["wan_model_dir"]
     model_manager = ModelManager(device="cpu")
@@ -821,10 +849,7 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     audio_wav2vec_fea = get_audio_features(wav2vec, wav2vec_processor, audio_path, fps, num_frames)
     wav2vec.to("cpu")
     torch.cuda.empty_cache()
-    image_size = unified.get("image_size")
-    image = resize_image_by_longest_edge(
-        image_path, None if image_size is None else int(image_size)
-    )
+    image = _resize_fantasy_image(image_path, unified.get("image_size"))
     width, height = image.size
     router = _create_router(cfg, routing, patch_h=max(1, height // 16), patch_w=max(1, width // 16))
     print(
