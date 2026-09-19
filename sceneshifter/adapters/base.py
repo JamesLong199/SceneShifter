@@ -338,11 +338,8 @@ def _should_local_rerope(
     # scene-mask kernels. Applying MultiTalk's policy changes every routed step.
     if backend in {"infinitetalk", "fantasytalking", "wan_s2v", "wan_animate"}:
         return False
-    # VideoX-Fun's SceneShifter mixin always rebuilds new-scene queries on a
-    # local temporal phase while scene masking is active.
-    if backend == "wan_fun_camera":
-        return True
-    # MultiTalk's "auto" policy is conditional on scene-0 FG/full visibility.
+    # MultiTalk and VideoX-Fun use the same "auto" policy: local only when the
+    # query row cannot see scene-0 foreground/full keys.
     try:
         row = router.attention_row(block, int(segment), region)
     except ValueError:
@@ -354,6 +351,45 @@ def _should_local_rerope(
         if active and int(key_seg) == 0 and str(key_region) in ("fg", "full"):
             return False
     return True
+
+
+def _fun_camera_local_rope(
+    x: torch.Tensor, grid_sizes: torch.Tensor, freqs: torch.Tensor
+) -> torch.Tensor:
+    """VideoX-Fun SceneShifter local RoPE uses float64 complex multiplication."""
+    sequence, heads, complex_dim = x.size(1), x.size(2), x.size(3) // 2
+    split = [
+        complex_dim - 2 * (complex_dim // 3),
+        complex_dim // 3,
+        complex_dim // 3,
+    ]
+    freq_parts = freqs.split(split, dim=1)
+    output = []
+    for row, (frames, height, width) in enumerate(grid_sizes.tolist()):
+        frames, height, width = int(frames), int(height), int(width)
+        seq_len = frames * height * width
+        value = torch.view_as_complex(
+            x[row, :sequence].to(torch.float64).reshape(
+                sequence, heads, -1, 2
+            )
+        )
+        freq = torch.cat(
+            [
+                freq_parts[0][:frames]
+                .view(frames, 1, 1, -1)
+                .expand(frames, height, width, -1),
+                freq_parts[1][:height]
+                .view(1, height, 1, -1)
+                .expand(frames, height, width, -1),
+                freq_parts[2][:width]
+                .view(1, 1, width, -1)
+                .expand(frames, height, width, -1),
+            ],
+            dim=-1,
+        ).reshape(seq_len, 1, -1)
+        value = torch.view_as_real(value * freq.to(device=value.device)).flatten(2)
+        output.append(torch.cat([value, x[row, seq_len:]]))
+    return torch.stack(output).float()
 
 
 def _rerope_queries(
@@ -386,7 +422,10 @@ def _rerope_queries(
         q_seg_pre[:, local_mask] = q_seg_pre[:, local_mask] * factor
     grid_seg = grid.clone()
     grid_seg[:, 0] = int(end - start)
-    q_local = rope_fn(q_seg_pre, grid_seg, freqs)
+    if getattr(router, "backend", None) == "wan_fun_camera":
+        q_local = _fun_camera_local_rope(q_seg_pre, grid_seg, freqs)
+    else:
+        q_local = rope_fn(q_seg_pre, grid_seg, freqs)
     local_idx = q_idx - int(start) * spatial
     local_idx = local_idx[(local_idx >= 0) & (local_idx < q_local.shape[1])]
     if local_idx.numel() != q_idx.numel():
