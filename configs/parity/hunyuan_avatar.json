@@ -5,6 +5,11 @@
   "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
   "metadata": "ablations/metadata_jsons_v2_mmdit/032_metadata.json",
   "official_run_dir": "/data/home/jzlong/codes/HunyuanVideo-Avatar/results/hunyuan_sceneshifter_mmdit_refattn_l19h22_t0_qscale_trans2_ctx2_t2049_0803",
+  "locks": {
+    "reference_feature_sha": "8526b727269099ebb31bde7f2ea095f854b2271d",
+    "reference_base_sha": "2a337d0b48019ba4184942a76b2802abf3266d7d",
+    "official_sha": "8c31d0d489df8418fa36a2a709ebdf0b47c7bf06"
+  },
   "reference": {
     "repo": "/data/home/jzlong/codes/HunyuanVideo-Avatar",
     "branch": "exp",

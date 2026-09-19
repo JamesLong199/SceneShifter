@@ -478,29 +478,29 @@ def _wrap_create_pipeline(mod: Any, router: Any, adapter: str, routing: Dict[str
 
 
 def _filter_official_argv(mod: Any, argv: List[str]) -> List[str]:
-    """Drop CLI flags the official parser does not declare."""
+    """Validate flags before invoking an official parser.
+
+    Silently dropping a parity flag changes the generation contract while still
+    producing a plausible video. Sidecar-only options must be consumed before
+    this function; every remaining flag is required to exist in the official
+    entrypoint.
+    """
     source_files = []
     for candidate in (getattr(mod, "__file__", None),):
         if candidate and Path(candidate).is_file():
             source_files.append(Path(candidate).read_text(errors="ignore"))
     blob = "\n".join(source_files)
     filtered: List[str] = []
-    skip_next = False
     i = 0
     while i < len(argv):
         tok = argv[i]
-        if skip_next:
-            skip_next = False
-            i += 1
-            continue
         if tok.startswith("--"):
             key = tok.split("=", 1)[0]
             if key not in blob:
-                print(f"[parity-unified] drop unsupported official flag {tok}", flush=True)
-                if "=" not in tok and i + 1 < len(argv) and not argv[i + 1].startswith("-"):
-                    skip_next = True
-                i += 1
-                continue
+                raise RuntimeError(
+                    f"official entrypoint {getattr(mod, '__file__', mod)!r} "
+                    f"does not declare required parity flag {key}"
+                )
         filtered.append(tok)
         i += 1
     return filtered
@@ -516,15 +516,10 @@ def _invoke_generate(mod: Any, script: str, argv: List[str]) -> None:
                 args = mod.parse_args(argv)
             except TypeError:
                 args = mod.parse_args()
-            pipeline = None
-            if hasattr(mod, "create_pipeline"):
-                try:
-                    pipeline = None
-                except Exception:
-                    pipeline = None
-            try:
-                mod.generate(args, pipeline=pipeline) if pipeline is not None else mod.generate(args)
-            except TypeError:
+            params = inspect.signature(mod.generate).parameters
+            if "pipeline" in params:
+                mod.generate(args, pipeline=None)
+            else:
                 mod.generate(args)
             return
         if hasattr(mod, "_parse_args") and hasattr(mod, "generate"):
@@ -598,8 +593,8 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
         argv += ["--mode", str(unified["mode"])]
     if unified.get("frame_num"):
         argv += ["--frame_num", str(unified["frame_num"])]
-    if unified.get("audio_start_timestep") is not None:
-        argv += ["--audio_start_timestep", str(unified["audio_start_timestep"])]
+    # Official main has no SceneShifter audio-start CLI. The in-memory audio
+    # residual and CFG wrappers consume this sidecar-only setting.
     _invoke_generate(gm, script, argv)
 
 
@@ -798,7 +793,10 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     audio_wav2vec_fea = get_audio_features(wav2vec, wav2vec_processor, audio_path, fps, num_frames)
     wav2vec.to("cpu")
     torch.cuda.empty_cache()
-    image = resize_image_by_longest_edge(image_path, int(unified.get("image_size", 768)))
+    image_size = unified.get("image_size")
+    image = resize_image_by_longest_edge(
+        image_path, None if image_size is None else int(image_size)
+    )
     width, height = image.size
     router = _create_router(cfg, routing, patch_h=max(1, height // 16), patch_w=max(1, width // 16))
     print(

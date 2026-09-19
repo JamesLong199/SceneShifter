@@ -5,6 +5,11 @@
   "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
   "metadata": "configs/parity/assets/wan_animate_012_frame_prompt.json",
   "official_run_dir": "/tmp/wan_animate_mask_demo_self/exp_012",
+  "locks": {
+    "reference_feature_sha": "87a228ea5f815ffcae4790094fb0f9b68d0c5289",
+    "reference_base_sha": "42bf4cfaa384bc21833865abc2f9e6c0e67233dc",
+    "official_sha": "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
+  },
   "reference": {
     "repo": "/data/home/jzlong/codes/Wan2.2-animate",
     "branch": "animate_sceneshifter",

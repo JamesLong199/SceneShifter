@@ -90,6 +90,8 @@ def overlay_routing(routing: Dict[str, Any], unified: Dict[str, Any]) -> Dict[st
         "ref_loc_max_timesteps",
         "freeze_live_mask",
         "infer_frames",
+        "input_mask_cover_original",
+        "input_mask_cover_head_only",
     ):
         if unified.get(key) is not None:
             out[key] = unified[key]

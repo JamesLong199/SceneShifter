@@ -52,6 +52,20 @@ def _checkout(repo: str, branch: str) -> None:
     subprocess.check_call(["git", "-C", repo, "checkout", branch])
 
 
+def _require_locked_sha(cfg: Dict[str, Any], side: str, repo: str) -> str:
+    key = "reference_feature_sha" if side == "reference" else "official_sha"
+    expected = str((cfg.get("locks") or {}).get(key) or "")
+    actual = git_head(repo)
+    if not expected:
+        raise RuntimeError(f"{cfg['backbone']} parity config is missing locks.{key}")
+    if actual != expected:
+        raise RuntimeError(
+            f"{cfg['backbone']} {side} revision drift: expected {expected}, got {actual} "
+            f"at {repo}"
+        )
+    return actual
+
+
 def _reference_command(cfg: Dict[str, Any], out_dir: Path, gpu: int) -> List[str]:
     ref = cfg["reference"]
     python = conda_python(cfg["conda_env"])
@@ -124,14 +138,20 @@ def main() -> int:
         "config": cfg,
     }
     if args.side == "reference":
-        payload["checkout_sha"] = git_head(cfg["reference"]["repo"])
+        _checkout(cfg["reference"]["repo"], cfg["reference"]["branch"])
+        payload["checkout_sha"] = _require_locked_sha(
+            cfg, "reference", cfg["reference"]["repo"]
+        )
         payload["checkout_branch"] = cfg["reference"]["branch"]
+        payload["resolved_argv"] = _reference_command(cfg, out_dir, args.gpu)
         write_run_args(out_dir, payload)
         run_reference(cfg, out_dir, args.gpu)
     else:
         official = resolve_official_root(cfg)
         payload["official_root"] = str(official)
-        payload["official_sha"] = git_head(str(official)) if official.is_dir() else "missing"
+        if not official.is_dir():
+            raise FileNotFoundError(f"official checkout missing: {official}")
+        payload["official_sha"] = _require_locked_sha(cfg, "unified", str(official))
         write_run_args(out_dir, payload)
         run_unified(cfg, out_dir)
     payload["finished_at"] = datetime.now(timezone.utc).isoformat()

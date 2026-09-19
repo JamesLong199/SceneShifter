@@ -116,7 +116,6 @@ def wrap_fantasy_i2v_cross_module(module: nn.Module, router: Optional[FramePromp
         pass_type = str(getattr(self, "_ss_pass", getattr(active, "_ss_pass", "cond")) or "cond")
         if (
             active is None
-            or getattr(active, "text_embeddings", None) is None
             or not active.should_use_segment_prompts(timestep_idx, pass_type)
         ):
             return _fallback(
@@ -130,6 +129,11 @@ def wrap_fantasy_i2v_cross_module(module: nn.Module, router: Optional[FramePromp
                 latents_num_frames,
                 audio_scale,
                 kwargs,
+            )
+        if getattr(active, "text_embeddings", None) is None:
+            raise RuntimeError(
+                f"fantasytalking segment prompts are active at step {timestep_idx}, "
+                "but no segment text embeddings were captured"
             )
         project_router_text_embeddings(active)
         clip_len = _CLIP_TOKENS if context.size(1) > _CLIP_TOKENS else 0

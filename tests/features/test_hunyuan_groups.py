@@ -1,5 +1,6 @@
 import torch
 
+from sceneshifter.adapters import hunyuan_avatar as hunyuan_adapter
 from sceneshifter.adapters.hunyuan_avatar import (
     apply_hunyuan_official_masks,
     build_hunyuan_groups,
@@ -101,3 +102,48 @@ def test_hunyuan_ref_fg_stays_static_after_live(tmp_path):
     assert torch.equal(ref_fg.cpu(), static.cpu())
     assert bool(video_fg[0, 5])
     assert not bool(ref_fg[5])
+
+
+def test_hunyuan_cfg_batch_updates_live_mask_before_row_routing(
+    bg_mask_path, monkeypatch
+):
+    cfg = canonical_config(background_mask_path=bg_mask_path)
+    cfg["attention_control_schedule"][0]["params"]["apply_on_uncond_passes"] = True
+    router = FramePromptRouter(
+        cfg, backend="hunyuan_avatar", patch_height=2, patch_width=2
+    )
+    router._hy_cond_text_segments = [(0, 1), (1, 2)]
+    router._hy_uncond_text_len = 2
+    events = []
+
+    def update(*args):
+        events.append(("update", args[-1]))
+
+    real_groups = hunyuan_adapter.build_hunyuan_groups
+
+    def groups(*args, **kwargs):
+        events.append(("groups", args[2]))
+        return real_groups(*args, **kwargs)
+
+    monkeypatch.setattr(hunyuan_adapter, "_maybe_update_live_mask", update)
+    monkeypatch.setattr(hunyuan_adapter, "build_hunyuan_groups", groups)
+
+    class Module:
+        _ss_img_len = 36
+        _ss_timestep = 0
+        _ss_pass = "cond"
+        _ss_block_idx = 0
+
+    seq = 38
+    q = torch.randn(2 * seq, 2, 4)
+
+    def flash(q, k, v, *args, **kwargs):
+        return q
+
+    out = hunyuan_adapter.hunyuan_scene_varlen(
+        flash, Module(), router, q, q.clone(), q.clone(), seq, (), {}
+    )
+    assert out.shape == q.shape
+    assert events[0] == ("update", "cond")
+    assert events.count(("update", "cond")) == 1
+    assert events[1][0] == "groups"

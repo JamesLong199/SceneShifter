@@ -5,6 +5,11 @@
   "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
   "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L25H26_L39H25/032_metadata.json",
   "official_run_dir": "/data/home/jzlong/data/SceneShifter_dataset/results/fantasytalking_at15_v2_ref_attn_avg_L37H32_L25H26_L39H25_reft9_tstart2_frozenmask_seed43_lt2_lc1_tt22-29",
+  "locks": {
+    "reference_feature_sha": "4e017c272c5fa6d0a4bf60be1990957b9d6ba6c3",
+    "reference_base_sha": "75da7bd2cf931529a55ec2522770a705a90d8e64",
+    "official_sha": "8c2d0c9ce2441eb02b5cf1c10d23dbab5ce06677"
+  },
   "reference": {
     "repo": "/data/home/jzlong/codes/fantasy-talking",
     "branch": "exp",
@@ -31,7 +36,7 @@
     "fantasytalking_model_path": "/mnt/whuscs/ljz/fantasy-talking/models/fantasytalking_model.ckpt",
     "wav2vec_model_dir": "/mnt/whuscs/ljz/fantasy-talking/wav2vec2-base-960h",
     "base_seed": 43,
-    "image_size": 768,
+    "image_size": null,
     "audio_start_timestep": 15,
     "ref_loc_max_timesteps": 9,
     "freeze_live_mask": true,

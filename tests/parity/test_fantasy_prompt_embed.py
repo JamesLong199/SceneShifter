@@ -1,8 +1,10 @@
+import pytest
 import torch
 import torch.nn as nn
 
 from sceneshifter.adapters.base import thread_timestep
 from sceneshifter.parity.unified import (
+    _filter_official_argv,
     _inject,
     _install_encode_prompt_hook,
     _install_fantasy_audio_cfg_gate,
@@ -285,6 +287,18 @@ def test_encoder_device_prefers_offloaded_t5():
     assert _encoder_device(Pipe()) == torch.device("cpu")
 
 
+def test_official_argv_rejects_silently_dropped_flags(tmp_path):
+    entrypoint = tmp_path / "generate.py"
+    entrypoint.write_text('parser.add_argument("--known")\n')
+
+    class Module:
+        __file__ = str(entrypoint)
+
+    assert _filter_official_argv(Module, ["--known", "value"]) == ["--known", "value"]
+    with pytest.raises(RuntimeError, match="--missing"):
+        _filter_official_argv(Module, ["--missing", "value"])
+
+
 def test_mux_fantasy_audio_uses_env_ffmpeg(tmp_path, monkeypatch):
     from pathlib import Path
 
@@ -354,3 +368,48 @@ def test_inject_finds_wan_animate_noise_model():
     router = FramePromptRouter(canonical_config(), patch_height=2, patch_width=2)
     bound = _inject(Wrapper(), router, "wan_animate")
     assert len(bound) >= 1
+
+
+def test_animate_cross_attention_runs_clip_branch_once(monkeypatch):
+    from sceneshifter.adapters.wan_animate import wrap_animate_cross_attention
+
+    calls = []
+
+    def flash_attention(q, k, v, k_lens=None):
+        calls.append((int(q.shape[1]), int(k.shape[1])))
+        return q
+
+    class Attn(nn.Module):
+        use_img_emb = True
+        num_heads = 2
+        head_dim = 4
+
+        def __init__(self):
+            super().__init__()
+            self.q = nn.Linear(8, 8, bias=False)
+            self.k = nn.Linear(8, 8, bias=False)
+            self.v = nn.Linear(8, 8, bias=False)
+            self.k_img = nn.Linear(8, 8, bias=False)
+            self.v_img = nn.Linear(8, 8, bias=False)
+            self.o = nn.Linear(8, 8, bias=False)
+            self.norm_q = nn.Identity()
+            self.norm_k = nn.Identity()
+            self.norm_k_img = nn.Identity()
+
+        def forward(self, x, context, context_lens=None):
+            return x
+
+    monkeypatch.setitem(Attn.forward.__globals__, "flash_attention", flash_attention)
+    cfg = canonical_config()
+    router = FramePromptRouter(
+        cfg, backend="wan_animate", patch_height=2, patch_width=2
+    )
+    router.set_text_embeddings([torch.randn(1, 4, 8), torch.randn(1, 4, 8)])
+    module = Attn()
+    wrap_animate_cross_attention(module, router)
+    module._ss_timestep = 3
+    module._ss_block_idx = 0
+    module._ss_pass = "cond"
+    out = module(torch.randn(1, 32, 8), torch.randn(1, 261, 8))
+    assert out.shape == (1, 32, 8)
+    assert calls == [(12, 4), (20, 4), (32, 257)]

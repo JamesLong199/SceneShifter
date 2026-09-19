@@ -167,12 +167,19 @@ class FramePromptRouter:
             raw_fg = subject_fg_from_background_paths(paths, self.num_frames)
             self.raw_subject_fg = raw_fg
             self.subject_fg_masks, self.static_bg = downsample_subject_fg(
-                raw_fg, self.patch_height, self.patch_width
+                raw_fg,
+                self.patch_height,
+                self.patch_width,
+                center_crop=self.backend in {"wan_s2v", "wan_animate"},
+                cover_original=bool(cfg.get("input_mask_cover_original", False)),
             )
 
         self._selector_scores: Dict[Any, Any] = {}
         self._pending_selector_scores: Dict[Any, Any] = {}
         self._ref_loc_scores: Dict[Tuple[int, int, int], Tuple[torch.Tensor, torch.Tensor]] = {}
+        self._pending_ref_loc_scores: Dict[
+            Tuple[int, int, int], Tuple[torch.Tensor, torch.Tensor]
+        ] = {}
 
     def set_text_embeddings(self, embeddings: List[torch.Tensor]) -> None:
         if len(embeddings) != self.num_segments:
@@ -480,7 +487,12 @@ class FramePromptRouter:
         fg: torch.Tensor,
         bg: torch.Tensor,
     ) -> None:
-        self._ref_loc_scores[(int(timestep_idx), int(layer_idx), int(head_idx))] = (
+        target = (
+            self._pending_ref_loc_scores
+            if self.backend in {"wan_s2v", "wan_animate"}
+            else self._ref_loc_scores
+        )
+        target[(int(timestep_idx), int(layer_idx), int(head_idx))] = (
             fg.detach().float().cpu(),
             bg.detach().float().cpu(),
         )
@@ -537,9 +549,15 @@ class FramePromptRouter:
         )
 
     def complete_denoising_step(self) -> None:
-        """S2V-style publish: pending selector scores become visible after CFG."""
+        """Publish backend scores only after every CFG pass in the step."""
         self._selector_scores = dict(self._pending_selector_scores)
         self._pending_selector_scores = {}
+        if self._pending_ref_loc_scores:
+            self._ref_loc_scores.update(self._pending_ref_loc_scores)
+            self._pending_ref_loc_scores = {}
+        if self.backend in {"wan_s2v", "wan_animate"}:
+            self.live_bg = None
+            self.live_subject_fg = None
 
     def observe_ref_attention(self, key: Any, scores: Any) -> None:
         self._pending_selector_scores[key] = scores

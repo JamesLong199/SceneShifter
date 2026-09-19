@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -42,3 +43,15 @@ def test_reference_checkout_optional():
     if not REFERENCE_ROOT.exists():
         pytest.skip("tests/reference not cloned; run setup_backbones.sh --with-reference")
     assert any(REFERENCE_ROOT.iterdir())
+
+
+@pytest.mark.parity
+def test_every_parity_config_locks_both_revisions():
+    config_root = Path(__file__).resolve().parents[2] / "configs" / "parity"
+    configs = [json.loads(path.read_text()) for path in sorted(config_root.glob("*.json"))]
+    assert len(configs) == 7
+    for cfg in configs:
+        locks = cfg.get("locks") or {}
+        assert len(str(locks.get("reference_feature_sha") or "")) == 40, cfg["backbone"]
+        assert len(str(locks.get("reference_base_sha") or "")) == 40, cfg["backbone"]
+        assert len(str(locks.get("official_sha") or "")) == 40, cfg["backbone"]

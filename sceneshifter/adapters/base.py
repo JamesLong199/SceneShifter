@@ -14,6 +14,7 @@ import torch
 import torch.nn as nn
 
 from ..attention import gather_attention, scaled_dot_product
+from ..layouts import S2VTokenLayout
 from ..ref_attn import get_attn_map_with_target
 from ..router import FramePromptRouter
 
@@ -127,7 +128,18 @@ def _maybe_update_spatial(router: FramePromptRouter, module: nn.Module, q: torch
         if raw is not None:
             from ..masks import downsample_subject_fg
 
-            router.subject_fg_masks, router.static_bg = downsample_subject_fg(raw, gh, gw)
+            router.subject_fg_masks, router.static_bg = downsample_subject_fg(
+                raw,
+                gh,
+                gw,
+                center_crop=getattr(router, "backend", None)
+                in {"wan_s2v", "wan_animate"},
+                cover_original=bool(
+                    (getattr(router, "config", {}) or {}).get(
+                        "input_mask_cover_original", False
+                    )
+                ),
+            )
             router.live_bg = None
             router.live_subject_fg = None
             return
@@ -317,9 +329,19 @@ def _should_local_rerope(
     segment: int,
     region: Optional[str],
 ) -> bool:
-    """Match MultiTalk auto RoPE: local only when new-scene Q cannot attend scene-0 FG/full."""
+    """Use the native branch's local-RoPE policy for this backend."""
     if int(segment) <= 0:
         return False
+    backend = str(getattr(router, "backend", ""))
+    # These native ports keep the model's global post-RoPE queries in their
+    # scene-mask kernels. Applying MultiTalk's policy changes every routed step.
+    if backend in {"infinitetalk", "fantasytalking", "wan_s2v", "wan_animate"}:
+        return False
+    # VideoX-Fun's SceneShifter mixin always rebuilds new-scene queries on a
+    # local temporal phase while scene masking is active.
+    if backend == "wan_fun_camera":
+        return True
+    # MultiTalk's "auto" policy is conditional on scene-0 FG/full visibility.
     try:
         row = router.attention_row(block, int(segment), region)
     except ValueError:
@@ -422,6 +444,39 @@ def _transition_query_indices(
     return by_segment
 
 
+def _s2v_token_layout(router: FramePromptRouter, sequence_length: int) -> S2VTokenLayout:
+    noisy = int(router.num_frames) * int(router.spatial_tokens)
+    reference = int(router.spatial_tokens)
+    framepack = int(sequence_length) - noisy - reference
+    if framepack < 0:
+        raise ValueError(
+            f"S2V sequence has {sequence_length} tokens, expected at least "
+            f"{noisy + reference} for noisy+reference"
+        )
+    return S2VTokenLayout(
+        noisy_frames=int(router.num_frames),
+        spatial_tokens=int(router.spatial_tokens),
+        framepack_tokens=framepack,
+    )
+
+
+def _s2v_reference_indices(
+    router: FramePromptRouter,
+    layout: S2VTokenLayout,
+    region: Optional[str],
+    device: torch.device,
+) -> torch.Tensor:
+    if region in (None, "full"):
+        local = torch.arange(int(router.spatial_tokens), device=device)
+    else:
+        static_bg = getattr(router, "static_bg", None)
+        if static_bg is None:
+            raise ValueError("S2V reference fg/bg routing requires a static input mask")
+        frame_bg = static_bg[0].to(device=device, dtype=torch.bool)
+        local = torch.where(frame_bg if region == "bg" else ~frame_bg)[0]
+    return local + int(layout.reference_slice.start)
+
+
 def _ref_target_masks(router: FramePromptRouter, spatial: int, device, dtype) -> Optional[torch.Tensor]:
     subjects = getattr(router, "subject_fg_masks", None)
     if subjects is None or subjects.numel() == 0:
@@ -499,6 +554,13 @@ def _collect_live_ref_attn(
     score_dtype = v.dtype if torch.is_tensor(v) else q.dtype
     q_score = q.to(dtype=score_dtype)
     k_score = k.to(dtype=score_dtype)
+    if (
+        getattr(router, "backend", None) == "wan_fun_camera"
+        and int(q_score.shape[0]) > 1
+    ):
+        # Native Fun Camera collects localization from the conditional CFG row.
+        q_score = q_score[-1:]
+        k_score = k_score[-1:]
     targets = _ref_target_masks(router, spatial, q.device, score_dtype)
     if targets is None:
         return
@@ -508,6 +570,14 @@ def _collect_live_ref_attn(
     if int(targets.shape[-1]) != spf:
         # S2V packs extra motion/cond tokens; do not crash official flash.
         return
+    q_for_scores = q_score[:, :video]
+    k_for_scores = k_score
+    if getattr(router, "backend", None) == "wan_s2v":
+        try:
+            layout = _s2v_token_layout(router, int(k_score.shape[1]))
+        except ValueError:
+            return
+        k_for_scores = k_score[:, layout.reference_slice]
     num_subjects = int(targets.shape[0] - 1)
     # One head at a time: a full 40-head map is ~7GB and OOMs next to the 14B DiT.
     for head in wanted_heads:
@@ -515,8 +585,8 @@ def _collect_live_ref_attn(
             continue
         try:
             scores = get_attn_map_with_target(
-                q_score[:, :video, head : head + 1],
-                k_score[:, :, head : head + 1],
+                q_for_scores[:, :, head : head + 1],
+                k_for_scores[:, :, head : head + 1],
                 shape,
                 targets,
             )
@@ -587,6 +657,11 @@ def scene_masked_official_flash(
     out = q.new_zeros(q.shape, dtype=v.dtype)
     video_tokens = router.num_frames * router.spatial_tokens
     extra = max(0, int(q.shape[1]) - video_tokens)
+    s2v_layout = (
+        _s2v_token_layout(router, int(q.shape[1]))
+        if getattr(router, "backend", None) == "wan_s2v"
+        else None
+    )
 
     def _gather(
         q_idx: torch.Tensor,
@@ -595,14 +670,36 @@ def scene_masked_official_flash(
         region: Optional[str] = None,
     ) -> None:
         k_idx = k_idx[(k_idx >= 0) & (k_idx < k.shape[1])]
-        if extra_key_fn is not None:
-            extra_k = extra_key_fn(router, k, segment)
-            if extra_k is not None and extra_k.numel():
-                k_idx = torch.unique(torch.cat([k_idx, extra_k.to(k_idx.device)]), sorted=True)
-        if extra > 0:
+        if s2v_layout is not None:
+            row = router.attention_row(block, int(segment), region)
+            allow_ref, ref_region = row[0]
+            if allow_ref:
+                ref_idx = _s2v_reference_indices(
+                    router, s2v_layout, ref_region, k_idx.device
+                )
+                k_idx = torch.cat([k_idx, ref_idx])
+            framepack_idx = torch.arange(
+                int(s2v_layout.framepack_slice.start),
+                int(s2v_layout.framepack_slice.stop),
+                device=k_idx.device,
+            )
+            if framepack_idx.numel():
+                k_idx = torch.cat([k_idx, framepack_idx])
+            k_idx = torch.unique(k_idx, sorted=True)
+        else:
+            if extra_key_fn is not None:
+                extra_k = extra_key_fn(router, k, segment)
+                if extra_k is not None and extra_k.numel():
+                    k_idx = torch.unique(torch.cat([k_idx, extra_k.to(k_idx.device)]), sorted=True)
+        if extra > 0 and s2v_layout is None:
             extra_idx = torch.arange(video_tokens, q.shape[1], device=q.device)
             k_idx = torch.unique(torch.cat([k_idx, extra_idx]), sorted=True)
-        q_idx = q_idx[(q_idx >= 0) & (q_idx < video_tokens)]
+        q_limit = (
+            int(s2v_layout.reference_slice.stop)
+            if s2v_layout is not None
+            else int(video_tokens)
+        )
+        q_idx = q_idx[(q_idx >= 0) & (q_idx < q_limit)]
         if q_idx.numel() == 0 or k_idx.numel() == 0:
             return
         if _should_local_rerope(router, block, segment, region):
@@ -650,6 +747,15 @@ def scene_masked_official_flash(
                 q_idx = _query_indices(router, segment, region, q.device)
             except ValueError:
                 q_idx = _query_indices(router, segment, None, q.device)
+            if s2v_layout is not None and int(segment) == 0:
+                q_idx = torch.cat(
+                    [
+                        q_idx,
+                        _s2v_reference_indices(
+                            router, s2v_layout, region, q.device
+                        ),
+                    ]
+                )
             k_idx = router.noisy_key_indices(
                 block,
                 segment,
@@ -683,7 +789,17 @@ def scene_masked_official_flash(
                 k_idx = torch.unique(torch.cat([k_idx, k_bg]), sorted=True)
             _gather(q_idx, k_idx, segment, trans_region)
     if extra > 0:
-        extra_idx = torch.arange(video_tokens, q.shape[1], device=q.device)
+        if s2v_layout is not None:
+            extra_idx = torch.arange(
+                int(s2v_layout.framepack_slice.start),
+                int(s2v_layout.framepack_slice.stop),
+                device=q.device,
+            )
+        else:
+            extra_idx = torch.arange(video_tokens, q.shape[1], device=q.device)
+        if extra_idx.numel() == 0:
+            _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
+            return out
         piece = _call_official_flash(
             orig,
             name,
@@ -693,7 +809,7 @@ def scene_masked_official_flash(
             args,
             kwargs,
             used_kw,
-            subset=True,
+            subset=s2v_layout is None,
         )
         if isinstance(piece, tuple):
             piece = piece[0]
@@ -858,9 +974,16 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
         timestep_idx = kwargs.pop("timestep_idx", getattr(self, "_ss_timestep", 0))
         pass_type = kwargs.pop("pass_type", getattr(self, "_ss_pass", "cond"))
         kwargs.pop("block_idx", None)
-        if active_router is None or context is None or active_router.text_embeddings is None:
+        if active_router is None or context is None:
             if context is None:
                 return original(x, *args, **kwargs)
+            return original(x, context, *args, **kwargs)
+        if active_router.text_embeddings is None:
+            if active_router.should_use_segment_prompts(int(timestep_idx), str(pass_type)):
+                raise RuntimeError(
+                    f"{active_router.backend} segment prompts are active at step "
+                    f"{int(timestep_idx)}, but no segment text embeddings were captured"
+                )
             return original(x, context, *args, **kwargs)
         project_router_text_embeddings(active_router)
         talking = getattr(active_router, "backend", "") in {"multitalk", "infinitetalk"}
@@ -870,6 +993,29 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
             args, kwargs = _drop_packed_context_lens(args, kwargs)
         if not active_router.should_use_segment_prompts(int(timestep_idx), str(pass_type)):
             return original(x, context, *args, **kwargs)
+        if getattr(active_router, "backend", None) == "wan_s2v":
+            # Native S2V runs baseline cross-attention over the complete token
+            # sequence, then overwrites only noisy scene slices with segment T5.
+            routed = original(x, context, *args, **kwargs)
+            for segment in range(active_router.num_segments):
+                start, end = active_router.segment_bounds[segment]
+                embed_idx = active_router.selected_text_index(
+                    int(timestep_idx), segment, str(pass_type)
+                )
+                if embed_idx is None:
+                    raise RuntimeError("S2V conditional routing has no text index")
+                text = active_router.text_embeddings[embed_idx]
+                segment_context = _clip_plus_text(context, text)
+                if segment_context is None:
+                    raise RuntimeError("S2V segment text does not match official context")
+                sl = slice(
+                    int(start) * int(active_router.spatial_tokens),
+                    int(end) * int(active_router.spatial_tokens),
+                )
+                routed[:, sl] = original(
+                    x[:, sl], segment_context, *args, **kwargs
+                )
+            return routed
         outs = []
         for segment in range(active_router.num_segments):
             start, end = active_router.segment_bounds[segment]
@@ -879,14 +1025,25 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
             text = active_router.text_embeddings[embed_idx]
             if not torch.is_tensor(text) or not torch.is_tensor(context):
                 return original(x, context, *args, **kwargs)
-            text = _clip_plus_text(context, text)
-            if text is None:
-                return original(x, context, *args, **kwargs)
             sl = slice(start * active_router.spatial_tokens, end * active_router.spatial_tokens)
-            try:
+            if (
+                getattr(active_router, "backend", None) == "wan_fun_camera"
+                and int(x.shape[0]) == 2
+                and int(context.shape[0]) == 2
+            ):
+                # Fun Camera performs CFG in one [uncond, cond] batch. Keep the
+                # negative context on row 0 and route only row 1 by segment.
+                cond_text = _clip_plus_text(context[1:], text)
+                if cond_text is None:
+                    raise RuntimeError("Fun Camera segment text does not match cond context")
+                uncond_piece = original(x[:1, sl], context[:1], *args, **kwargs)
+                cond_piece = original(x[1:, sl], cond_text, *args, **kwargs)
+                piece = torch.cat([uncond_piece, cond_piece], dim=0)
+            else:
+                text = _clip_plus_text(context, text)
+                if text is None:
+                    return original(x, context, *args, **kwargs)
                 piece = original(x[:, sl], text, *args, **kwargs)
-            except TypeError:
-                piece = original(x[:, sl], text)
             outs.append(piece)
         out = torch.cat(outs, dim=1)
         video = int(active_router.num_frames) * int(active_router.spatial_tokens)
@@ -959,6 +1116,11 @@ def thread_timestep(model: Any) -> None:
             # Official MultiTalk/InfiniteTalk run cond first, then drop-audio / uncond.
             pass_type = "cond" if state["pass"] == 0 else "uncond"
         if router is not None:
+            if (
+                stepped
+                and getattr(router, "backend", None) in {"wan_s2v", "wan_animate"}
+            ):
+                router.complete_denoising_step()
             if (
                 stepped
                 and bool(getattr(router, "freeze_live_mask", False))

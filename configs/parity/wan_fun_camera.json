@@ -5,6 +5,11 @@
   "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
   "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/092_metadata.json",
   "official_run_dir": "/data/home/jzlong/codes/VideoX-Fun/samples/sceneshifter_092_fun_camera",
+  "locks": {
+    "reference_feature_sha": "cac278fab8b5a75f4d42d357a78c557e9912450d",
+    "reference_base_sha": "dca24fb653e20e3f910a704e0b19d960b137a603",
+    "official_sha": "968f0e2192ba4c7a12868bf36d73260d135424ca"
+  },
   "reference": {
     "repo": "/data/home/jzlong/codes/VideoX-Fun",
     "branch": "fun_camera_sceneshifter",
@@ -30,6 +35,8 @@
     "video_length": 81,
     "guidance_scale": 6.0,
     "shift": 3,
+    "input_mask_cover_original": true,
+    "input_mask_cover_head_only": true,
     "negative_prompt": "Twisted body, limb deformities, text captions, comic, static, ugly, error, messy code, blurry, low quality, watermark, subtitles."
   },
   "expected_video_glob": "*.mp4"

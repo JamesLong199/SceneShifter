@@ -47,14 +47,78 @@ def _resize_binary(mask: torch.Tensor, height: int, width: int) -> torch.Tensor:
     return F.interpolate(mask[:, None].float(), (height, width), mode="nearest")[:, 0] > 0.5
 
 
+def center_crop_to_aspect(mask: torch.Tensor, height: int, width: int) -> torch.Tensor:
+    """Match Wan's resize-then-center-crop geometry before downsampling."""
+    src_h, src_w = map(int, mask.shape[-2:])
+    target_ratio = int(height) / int(width)
+    source_ratio = src_h / src_w
+    if abs(source_ratio - target_ratio) < 0.01:
+        return mask
+    if source_ratio > target_ratio:
+        crop_h = min(src_h, max(1, round(src_w * target_ratio)))
+        top = (src_h - crop_h) // 2
+        return mask[..., top : top + crop_h, :]
+    crop_w = min(src_w, max(1, round(src_h / target_ratio)))
+    left = (src_w - crop_w) // 2
+    return mask[..., :, left : left + crop_w]
+
+
+def downsample_mask_cover_original_2d(
+    mask: torch.Tensor, height: int, width: int
+) -> torch.Tensor:
+    """Downsample FG while preserving every positive source pixel on round-trip."""
+    if mask.ndim != 2:
+        raise ValueError(f"expected a 2D mask, got {tuple(mask.shape)}")
+    mask = center_crop_to_aspect(mask, height, width)
+    src_h, src_w = map(int, mask.shape)
+    original = mask > 0.5
+    latent = _resize_binary(original, int(height), int(width))[0]
+    if (src_h, src_w) == (int(height), int(width)):
+        return latent
+    owner = F.interpolate(
+        torch.arange(
+            int(height) * int(width),
+            device=mask.device,
+            dtype=torch.float32,
+        ).view(1, 1, int(height), int(width)),
+        size=(src_h, src_w),
+        mode="nearest",
+    )[0, 0].long()
+    uncovered = original & ~_resize_binary(latent, src_h, src_w)[0]
+    while bool(uncovered.any()):
+        counts = torch.bincount(
+            owner[uncovered], minlength=int(height) * int(width)
+        )
+        best = int(counts.argmax())
+        if int(counts[best]) <= 0:
+            raise RuntimeError("unable to cover the original mask")
+        latent.view(-1)[best] = True
+        uncovered = original & ~_resize_binary(latent, src_h, src_w)[0]
+    return latent
+
+
 def downsample_mask_to_latent(
     mask: torch.Tensor,
     height: int,
     width: int,
+    *,
+    center_crop: bool = False,
+    cover_original: bool = False,
 ) -> torch.Tensor:
     """Nearest downsample of a binary ``[H,W]`` or ``[N,H,W]`` mask."""
     if mask.ndim not in (2, 3):
         raise ValueError(f"expected a 2D or 3D mask, got {tuple(mask.shape)}")
+    if cover_original:
+        frames = mask[None] if mask.ndim == 2 else mask
+        result = torch.stack(
+            [
+                downsample_mask_cover_original_2d(frame, int(height), int(width))
+                for frame in frames
+            ]
+        )
+        return result[0] if mask.ndim == 2 else result
+    if center_crop:
+        mask = center_crop_to_aspect(mask, int(height), int(width))
     result = _resize_binary(mask, int(height), int(width))
     return result[0] if mask.ndim == 2 else result
 
@@ -106,11 +170,20 @@ def downsample_subject_fg(
     subject_fg: torch.Tensor,
     height: int,
     width: int,
+    *,
+    center_crop: bool = False,
+    cover_original: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Return ``(subject_fg [S,F,HW], static_bg [F,HW])`` at latent resolution."""
     subjects = []
     for subject in range(subject_fg.shape[0]):
-        latent = downsample_mask_to_latent(subject_fg[subject].float(), height, width)
+        latent = downsample_mask_to_latent(
+            subject_fg[subject].float(),
+            height,
+            width,
+            center_crop=center_crop,
+            cover_original=cover_original,
+        )
         subjects.append(latent.bool().flatten(1))
     subject_flat = torch.stack(subjects)
     union_fg = subject_flat.any(0)

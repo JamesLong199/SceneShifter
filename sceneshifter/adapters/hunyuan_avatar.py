@@ -523,12 +523,25 @@ def hunyuan_scene_varlen(
     block_idx = getattr(module, "_ss_block_idx", None)
     block = router.active_block(timestep, block_idx, pass_type)
     out = q4.new_zeros(q4.shape)
+    if batch > 1:
+        # Native Hunyuan captures localization from the conditional row before
+        # routing either row, so uncond and cond see one identical live mask.
+        _maybe_update_live_mask(
+            router,
+            q4[batch - 1],
+            k4[batch - 1],
+            img_len,
+            timestep,
+            block_idx,
+            "cond",
+        )
     for row in range(batch):
         row_pass = pass_type if batch == 1 else ("uncond" if row == 0 else "cond")
         row_mode = "global" if row_pass == "uncond" and timestep < 10 else "routed"
-        _maybe_update_live_mask(
-            router, q4[row], k4[row], img_len, timestep, block_idx, row_pass
-        )
+        if batch == 1:
+            _maybe_update_live_mask(
+                router, q4[row], k4[row], img_len, timestep, block_idx, row_pass
+            )
         groups = build_hunyuan_groups(
             router, block, row_mode, img_len, txt_len, timestep, q.device
         )
