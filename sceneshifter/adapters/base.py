@@ -682,44 +682,47 @@ def _collect_live_ref_attn(
         layout = _s2v_token_layout(router, int(k_score.shape[1]))
         k_for_scores = k_score[:, layout.reference_slice]
     num_subjects = int(targets.shape[0] - 1)
-    # One head at a time: a full 40-head map is ~7GB and OOMs next to the 14B DiT.
-    stored = 0
+    valid_heads = []
     for head in wanted_heads:
         if head < 0 or head >= int(q.shape[2]):
             raise RuntimeError(
                 f"{router.backend} ref-attn selector L{int(block_idx)}H{int(head)} "
                 f"outside {int(q.shape[2])} heads"
             )
-        try:
-            scores = get_attn_map_with_target(
-                q_for_scores[:, :, head : head + 1],
-                k_for_scores[:, :, head : head + 1],
-                shape,
-                targets,
-            )
-        except RuntimeError as exc:
-            raise RuntimeError(
-                f"{router.backend} ref-attn selector L{int(block_idx)}H{int(head)} "
-                "score collection failed"
-            ) from exc
-        if scores is None:
-            raise RuntimeError(
-                f"{router.backend} ref-attn selector L{int(block_idx)}H{int(head)} "
-                "returned no scores"
-            )
-        if int(scores.shape[1]) != video or video % spatial != 0:
-            raise RuntimeError(
-                f"{router.backend} ref-attn selector L{int(block_idx)}H{int(head)} "
-                f"score shape {tuple(scores.shape)} does not match video={video}"
-            )
-        fg = scores[:num_subjects].reshape(num_subjects, router.num_frames, spatial)
-        bg = scores[num_subjects].reshape(router.num_frames, spatial)
+        valid_heads.append(int(head))
+    # Native ports aggregate every requested head in one batched score call.
+    # Splitting heads into separate kernels changes threshold-boundary values.
+    head_index = torch.tensor(valid_heads, dtype=torch.long, device=q.device)
+    try:
+        scores = get_attn_map_with_target(
+            q_for_scores.index_select(2, head_index),
+            k_for_scores.index_select(2, head_index),
+            shape,
+            targets,
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"{router.backend} ref-attn selector L{int(block_idx)} heads "
+            f"{valid_heads} score collection failed"
+        ) from exc
+    if scores is None:
+        raise RuntimeError(
+            f"{router.backend} ref-attn selector L{int(block_idx)} heads "
+            f"{valid_heads} returned no scores"
+        )
+    if int(scores.shape[1]) != video or video % spatial != 0:
+        raise RuntimeError(
+            f"{router.backend} ref-attn selector L{int(block_idx)} heads "
+            f"{valid_heads} score shape {tuple(scores.shape)} does not match video={video}"
+        )
+    fg = scores[:num_subjects].reshape(num_subjects, router.num_frames, spatial)
+    bg = scores[num_subjects].reshape(router.num_frames, spatial)
+    for head in valid_heads:
         router.store_ref_loc_head(timestep_idx, int(block_idx), int(head), fg, bg)
-        stored += 1
-    if stored != len(wanted_heads):
+    if len(valid_heads) != len(wanted_heads):
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} stored "
-            f"{stored}/{len(wanted_heads)} heads"
+            f"{len(valid_heads)}/{len(wanted_heads)} heads"
         )
     if publish_animate:
         router.complete_denoising_step()

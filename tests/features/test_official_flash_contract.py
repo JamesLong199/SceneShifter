@@ -583,6 +583,35 @@ def test_fantasy_ref_loc_scores_union_fg_in_fp32(monkeypatch):
     assert seen["targets"][0].bool().tolist() == [True, True, False, False]
 
 
+def test_selector_heads_are_collected_in_one_batched_score_call(monkeypatch):
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[0, 0], [0, 1]],
+    }
+    router = FramePromptRouter(
+        cfg, backend="multitalk", patch_height=2, patch_width=2
+    )
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    seen = []
+
+    def scores(visual_q, ref_k, shape, targets):
+        seen.append(int(visual_q.shape[2]))
+        return torch.zeros(2, 32)
+
+    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 2, 2)
+    q = torch.randn(1, 32, 2, 2)
+    base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
+    assert seen == [2]
+    assert (0, 0, 0) in router._ref_loc_scores
+    assert (0, 0, 1) in router._ref_loc_scores
+
+
 def test_cross_attn_keeps_s2v_extra_tokens():
     cfg = canonical_config()
     cfg["segment_prompt_start_timestep"] = 0
