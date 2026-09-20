@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -615,6 +616,104 @@ def _invoke_generate(mod: Any, script: str, argv: List[str]) -> None:
         sys.argv = old
 
 
+OFFICIAL_IT_FIRST_CLIP_PIN = (
+    "latent[:, :cur_motion_frames_latent_num] = latent_motion_frames"
+)
+
+
+def disable_talking_color_correction(*modules: Any) -> int:
+    """No-op official Lab color matching used after VAE decode.
+
+    Feature-branch MultiTalk/InfiniteTalk comment ``match_and_blend_colors``
+    out even when ``color_correction_strength > 0``. Official main still
+    applies it. Patch the imported bindings in memory so locked third-party
+    trees stay unmodified.
+    """
+
+    def noop(source_chunk: Any, *args: Any, **kwargs: Any) -> Any:
+        return source_chunk
+
+    noop._ss_color_correction_disabled = True  # type: ignore[attr-defined]
+    patched = 0
+    for module in modules:
+        fn = getattr(module, "match_and_blend_colors", None)
+        if fn is None or getattr(fn, "_ss_color_correction_disabled", False):
+            continue
+        setattr(module, "match_and_blend_colors", noop)
+        patched += 1
+    return patched
+
+
+def install_infinitetalk_first_clip_pin_disable(cls: Any) -> int:
+    """Remove official InfiniteTalk first-clip clean-latent overwrites.
+
+    Official ``50aa`` reassigns the first motion latent to the VAE-encoded
+    cond image at every denoising step, including single-clip mode. The exp
+    branch deletes those two assignments so the first clip matches MultiTalk.
+    """
+    method_name = None
+    method = None
+    for name in ("generate_infinitetalk", "generate"):
+        candidate = getattr(cls, name, None)
+        if callable(candidate):
+            method_name, method = name, candidate
+            break
+    if method is None or method_name is None:
+        raise RuntimeError("InfiniteTalk pipeline has no generate_infinitetalk/generate")
+    if getattr(method, "_ss_first_clip_pin_disabled", False):
+        return int(getattr(method, "_ss_first_clip_pin_count", 0))
+    source = inspect.getsource(method)
+    count = source.count(OFFICIAL_IT_FIRST_CLIP_PIN)
+    if count == 0:
+        raise RuntimeError(
+            "official InfiniteTalk generate is missing first-clip latent pinning"
+        )
+    patched_src = textwrap.dedent(
+        source.replace(
+            OFFICIAL_IT_FIRST_CLIP_PIN,
+            "pass  # SceneShifter: drop official first-clip latent pin",
+        )
+    )
+    namespace: Dict[str, Any] = {}
+    exec(
+        compile(patched_src, "<sceneshifter-infinitetalk-pin>", "exec"),
+        method.__globals__,
+        namespace,
+    )
+    patched = namespace.get(method_name)
+    if patched is None:
+        raise RuntimeError(f"failed to rebind patched {method_name}")
+    patched._ss_first_clip_pin_disabled = True
+    patched._ss_first_clip_pin_count = count
+    setattr(cls, method_name, patched)
+    return count
+
+
+def _install_talking_official_decode_fixes(adapter: str) -> None:
+    try:
+        import wan.multitalk as talking  # type: ignore
+        import wan.utils.multitalk_utils as talking_utils  # type: ignore
+    except Exception as exc:  # noqa: BLE001
+        print(f"[parity-unified] talking decode-fix import skip: {exc}", flush=True)
+        return
+    n_color = disable_talking_color_correction(talking_utils, talking)
+    print(
+        f"[parity-unified] disabled official color correction on {n_color} bindings",
+        flush=True,
+    )
+    if adapter != "infinitetalk":
+        return
+    cls = getattr(talking, "InfiniteTalkPipeline", None)
+    if cls is None:
+        print("[parity-unified] InfiniteTalkPipeline missing; skip first-clip pin", flush=True)
+        return
+    n_pin = install_infinitetalk_first_clip_pin_disable(cls)
+    print(
+        f"[parity-unified] removed {n_pin} official InfiniteTalk first-clip latent pins",
+        flush=True,
+    )
+
+
 def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None:
     unified = cfg["unified"]
     input_json = _write_input_json(cfg, out_dir)
@@ -640,6 +739,7 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     try:
         import wan  # type: ignore
 
+        _install_talking_official_decode_fixes(adapter)
         _wrap_named_classes(
             wan,
             ["MultiTalkPipeline", "InfiniteTalkPipeline", "WanT2V", "WanI2V"],
