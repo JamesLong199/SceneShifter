@@ -7,9 +7,6 @@ from sceneshifter.adapters.base import (
     _grid_fhw,
     _fun_camera_serial_pass,
     _maybe_update_spatial,
-    _ref_loc_query_for_scene_mask,
-    _rerope_queries,
-    _should_local_rerope,
     project_router_text_embeddings,
     scene_masked_official_flash,
     wrap_audio_attention,
@@ -22,42 +19,6 @@ from tests.conftest import canonical_config
 
 class _Attn(nn.Module):
     pass
-
-
-def test_rerope_queries_skips_list_grid_sizes():
-    router = FramePromptRouter(canonical_config(), patch_height=2, patch_width=2)
-    module = _Attn()
-    module._ss_rope_fn = lambda *args, **kwargs: args[0]
-    module._ss_q_pre_rope = torch.randn(1, 32, 2, 2)
-    module._ss_freqs = torch.randn(2)
-    module._ss_grid_sizes = [[8, 2, 2]]
-    q = torch.randn(1, 32, 2, 2)
-    q_idx = torch.arange(4)
-    out = _rerope_queries(module, router, {"_mask": []}, q, q_idx, 0)
-    assert out.shape[1] == 4
-
-
-def test_local_rerope_policy_is_backend_specific():
-    cfg = canonical_config()
-    cfg["attention_control_schedule"][0]["self_attention_mask"] = [
-        [[1, "full"], [0, "full"]],
-        [[0, "full"], [1, "full"]],
-    ]
-    for backend in ("infinitetalk", "fantasytalking", "wan_s2v", "wan_animate"):
-        router = FramePromptRouter(cfg, backend=backend, patch_height=2, patch_width=2)
-        block = router.active_block(3, 0, "cond")
-        assert block is not None
-        assert not _should_local_rerope(router, block, 1, None)
-
-    fun = FramePromptRouter(cfg, backend="wan_fun_camera", patch_height=2, patch_width=2)
-    fun_block = fun.active_block(3, 0, "cond")
-    assert fun_block is not None
-    assert _should_local_rerope(fun, fun_block, 1, None)
-
-    multitalk = FramePromptRouter(cfg, backend="multitalk", patch_height=2, patch_width=2)
-    mt_block = multitalk.active_block(3, 0, "cond")
-    assert mt_block is not None
-    assert _should_local_rerope(multitalk, mt_block, 1, None)
 
 
 def test_fun_camera_serial_pass_resets_each_timestep():
@@ -444,31 +405,6 @@ def test_collect_fails_loud_on_s2v_grid_mask_mismatch():
             {"k_lens": torch.tensor([32])},
         )
     assert router._ref_loc_scores == {}
-
-
-def test_scene_mask_ref_loc_q_uses_local_new_scene_rope():
-    """Official scores ref-loc with locally re-roped new-scene Q, even if auto rerope is off."""
-    cfg = canonical_config()
-    cfg["attention_control_schedule"][0]["self_attention_mask"] = [
-        [[1, "full"], [1, "fg"]],
-        [[1, "fg"], [1, "full"]],
-    ]
-    cfg["attention_control_schedule"][0]["params"]["auto_q_scale"] = False
-    router = FramePromptRouter(cfg, patch_height=2, patch_width=2)
-    q = torch.randn(1, 32, 2, 4)
-    module = _Attn()
-    module._ss_q_pre_rope = q * 3
-    module._ss_freqs = torch.ones(1)
-    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
-    module._ss_rope_fn = lambda x, grid_sizes, freqs, *args, **kwargs: x
-    block = router.active_block(3, 0, "cond")
-    assert block is not None
-    q_ref = _ref_loc_query_for_scene_mask(module, router, block, q)
-    spatial = 4
-    scene0 = slice(0, 3 * spatial)
-    scene1 = slice(3 * spatial, 8 * spatial)
-    assert torch.equal(q_ref[:, scene0], q[:, scene0])
-    assert torch.equal(q_ref[:, scene1], (q * 3)[:, scene1])
 
 
 def test_talking_i2v_uncond_keeps_official_neg_context():

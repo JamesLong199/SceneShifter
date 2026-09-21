@@ -331,171 +331,6 @@ def _call_official_flash(
     return orig(q, k, v, **call_kwargs)
 
 
-def _install_rope_stash(globals_dict: Dict[str, Any]) -> bool:
-    if globals_dict.get("_ss_rope_patched"):
-        return True
-    orig = globals_dict.get("rope_apply")
-    if not callable(orig):
-        return False
-
-    def wrapped(x, grid_sizes, freqs, *args, **kwargs):
-        module = _CURRENT_MODULE.get()
-        if module is not None:
-            count = int(getattr(module, "_ss_rope_n", 0))
-            if count == 0:
-                module._ss_q_pre_rope = x
-            elif count == 1:
-                module._ss_k_pre_rope = x
-            module._ss_rope_n = count + 1
-            module._ss_freqs = freqs
-            module._ss_grid_sizes = grid_sizes
-            module._ss_rope_fn = orig
-        return orig(x, grid_sizes, freqs, *args, **kwargs)
-
-    globals_dict["rope_apply"] = wrapped
-    globals_dict["_ss_rope_patched"] = True
-    return True
-
-
-def _should_local_rerope(
-    router: FramePromptRouter,
-    block: Dict[str, Any],
-    segment: int,
-    region: Optional[str],
-) -> bool:
-    """Use the native branch's local-RoPE policy for this backend."""
-    if int(segment) <= 0:
-        return False
-    backend = str(getattr(router, "backend", ""))
-    # These native ports keep the model's global post-RoPE queries in their
-    # scene-mask kernels. Applying MultiTalk's policy changes every routed step.
-    if backend in {"infinitetalk", "fantasytalking", "wan_s2v", "wan_animate"}:
-        return False
-    # MultiTalk and VideoX-Fun use the same "auto" policy: local only when the
-    # query row cannot see scene-0 foreground/full keys.
-    try:
-        row = router.attention_row(block, int(segment), region)
-    except ValueError:
-        try:
-            row = router.attention_row(block, int(segment), "fg")
-        except Exception:
-            return False
-    for key_seg, (active, key_region) in enumerate(row):
-        if active and int(key_seg) == 0 and str(key_region) in ("fg", "full"):
-            return False
-    return True
-
-
-def _fun_camera_local_rope(
-    x: torch.Tensor, grid_sizes: torch.Tensor, freqs: torch.Tensor
-) -> torch.Tensor:
-    """VideoX-Fun SceneShifter local RoPE uses float64 complex multiplication."""
-    sequence, heads, complex_dim = x.size(1), x.size(2), x.size(3) // 2
-    split = [
-        complex_dim - 2 * (complex_dim // 3),
-        complex_dim // 3,
-        complex_dim // 3,
-    ]
-    freq_parts = freqs.split(split, dim=1)
-    output = []
-    for row, (frames, height, width) in enumerate(grid_sizes.tolist()):
-        frames, height, width = int(frames), int(height), int(width)
-        seq_len = frames * height * width
-        value = torch.view_as_complex(
-            x[row, :sequence].to(torch.float64).reshape(
-                sequence, heads, -1, 2
-            )
-        )
-        freq = torch.cat(
-            [
-                freq_parts[0][:frames]
-                .view(frames, 1, 1, -1)
-                .expand(frames, height, width, -1),
-                freq_parts[1][:height]
-                .view(1, height, 1, -1)
-                .expand(frames, height, width, -1),
-                freq_parts[2][:width]
-                .view(1, 1, width, -1)
-                .expand(frames, height, width, -1),
-            ],
-            dim=-1,
-        ).reshape(seq_len, 1, -1)
-        value = torch.view_as_real(value * freq.to(device=value.device)).flatten(2)
-        output.append(torch.cat([value, x[row, seq_len:]]))
-    return torch.stack(output).float()
-
-
-def _rerope_queries(
-    module: nn.Module,
-    router: FramePromptRouter,
-    block: Dict[str, Any],
-    q: torch.Tensor,
-    q_idx: torch.Tensor,
-    segment: int,
-) -> torch.Tensor:
-    rope_fn = getattr(module, "_ss_rope_fn", None)
-    q_pre = getattr(module, "_ss_q_pre_rope", None)
-    freqs = getattr(module, "_ss_freqs", None)
-    grid = getattr(module, "_ss_grid_sizes", None)
-    if rope_fn is None or q_pre is None or freqs is None or grid is None:
-        return q.index_select(1, q_idx)
-    if not torch.is_tensor(grid):
-        # Wan S2V stores grid_sizes as a Python list.
-        return q.index_select(1, q_idx)
-    start, end = router.segment_bounds[int(segment)]
-    spatial = int(router.spatial_tokens)
-    sl = slice(start * spatial, end * spatial)
-    if q_pre.shape[1] < end * spatial:
-        return q.index_select(1, q_idx)
-    q_seg_pre = q_pre[:, sl].clone()
-    token_mask = router.qscale_token_mask(block)
-    local_mask = token_mask[sl]
-    if bool(local_mask.any()):
-        factor = float(router.qscale_factor(int(segment), block))
-        q_seg_pre[:, local_mask] = q_seg_pre[:, local_mask] * factor
-    grid_seg = grid.clone()
-    grid_seg[:, 0] = int(end - start)
-    if getattr(router, "backend", None) == "wan_fun_camera":
-        q_local = _fun_camera_local_rope(q_seg_pre, grid_seg, freqs)
-    else:
-        q_local = rope_fn(q_seg_pre, grid_seg, freqs)
-    local_idx = q_idx - int(start) * spatial
-    local_idx = local_idx[(local_idx >= 0) & (local_idx < q_local.shape[1])]
-    if local_idx.numel() != q_idx.numel():
-        return q.index_select(1, q_idx)
-    return q_local.index_select(1, local_idx)
-
-
-def _ref_loc_query_for_scene_mask(
-    module: nn.Module,
-    router: FramePromptRouter,
-    block: Dict[str, Any],
-    q: torch.Tensor,
-) -> torch.Tensor:
-    """Official `_forward_with_scene_mask` can score ref-loc on local-rerope Q.
-
-    Kept for contract tests. Live collection stays on the post-RoPE attention Q:
-    using this stitch on 032 worsened decoded mean (6.99 -> 9.28).
-    """
-    q_ref = q
-    replaced = False
-    for segment in range(1, int(router.num_segments)):
-        try:
-            q_idx = _query_indices(router, segment, None, q.device)
-        except ValueError:
-            continue
-        if q_idx.numel() == 0:
-            continue
-        q_local = _rerope_queries(module, router, block, q, q_idx, segment)
-        if int(q_local.shape[1]) != int(q_idx.numel()):
-            continue
-        if not replaced:
-            q_ref = q.clone()
-            replaced = True
-        q_ref.index_copy_(1, q_idx, q_local.to(dtype=q_ref.dtype))
-    return q_ref
-
-
 def _transition_query_indices(
     router: FramePromptRouter, device: torch.device
 ) -> Dict[int, torch.Tensor]:
@@ -960,10 +795,7 @@ def scene_masked_official_flash(
         q_idx = q_idx[(q_idx >= 0) & (q_idx < q_limit)]
         if q_idx.numel() == 0 or k_idx.numel() == 0:
             return
-        if _should_local_rerope(router, block, segment, region):
-            q_piece = _rerope_queries(module, router, block, q, q_idx, segment)
-        else:
-            q_piece = q.index_select(1, q_idx)
+        q_piece = q.index_select(1, q_idx)
         piece = _call_official_flash(
             orig,
             name,
@@ -1146,12 +978,10 @@ def wrap_self_attention(
     module._ss_extra_key_fn = extra_key_fn
     globals_dict = getattr(original, "__globals__", {})
     patched_official = _install_flash_intercept(globals_dict)
-    _install_rope_stash(globals_dict)
 
     if patched_official:
 
         def forward(self, *args, **kwargs):
-            self._ss_rope_n = 0
             _stash_grid_sizes(self, args, kwargs)
             active_router = getattr(self, "frame_prompt_router", None)
             if (
@@ -1166,10 +996,6 @@ def wrap_self_attention(
                 return original(*args, **kwargs)
             finally:
                 _CURRENT_MODULE.reset(token)
-                # Animate 1280x720 keeps ~0.8 GiB per pre-RoPE tensor; 40 layers would OOM.
-                self._ss_q_pre_rope = None
-                self._ss_k_pre_rope = None
-                self._ss_freqs = None
                 self._ss_v_for_ref = None
 
         module.forward = types.MethodType(forward, module)
