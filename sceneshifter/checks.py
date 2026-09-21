@@ -112,6 +112,10 @@ def validate_config(config: Dict[str, Any], *, backend: str = "multitalk") -> No
         keys = sorted(int(k) for k in paths)
         if keys != list(range(len(keys))):
             _raise("background_mask_path keys must be contiguous from 0")
+    if bool(config.get("input_mask_cover_head_only", False)):
+        head_paths = config.get("head_mask_path")
+        if not isinstance(head_paths, dict) or not head_paths:
+            _raise("input_mask_cover_head_only=True requires head_mask_path")
 
 
 def validate_layout(

@@ -140,19 +140,7 @@ def _maybe_update_spatial(router: FramePromptRouter, module: nn.Module, q: torch
         router.spatial_tokens = spatial
         raw = getattr(router, "raw_subject_fg", None)
         if raw is not None:
-            from ..masks import downsample_subject_fg
-
-            router.subject_fg_masks, router.static_bg = downsample_subject_fg(
-                raw,
-                gh,
-                gw,
-                center_crop=getattr(router, "backend", None) == "wan_s2v",
-                cover_original=bool(
-                    (getattr(router, "config", {}) or {}).get(
-                        "input_mask_cover_original", False
-                    )
-                ),
-            )
+            router.rebuild_latent_masks()
             router.live_bg = None
             router.live_subject_fg = None
             return

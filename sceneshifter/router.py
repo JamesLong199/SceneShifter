@@ -10,6 +10,7 @@ from . import checks
 from .config import load_frame_prompt_config
 from .masks import (
     downsample_subject_fg,
+    downsample_subject_fg_head_union,
     identity_self_attention_mask,
     spatial_token_indices,
     subject_fg_from_background_paths,
@@ -157,6 +158,7 @@ class FramePromptRouter:
 
         self.subject_fg_masks: Optional[torch.Tensor] = None
         self.raw_subject_fg: Optional[torch.Tensor] = None
+        self.raw_head_fg: Optional[torch.Tensor] = None
         self.static_bg: Optional[torch.Tensor] = None
         self.live_bg: Optional[torch.Tensor] = None
         self.live_subject_fg: Optional[torch.Tensor] = None
@@ -168,13 +170,12 @@ class FramePromptRouter:
         if paths:
             raw_fg = subject_fg_from_background_paths(paths, self.num_frames)
             self.raw_subject_fg = raw_fg
-            self.subject_fg_masks, self.static_bg = downsample_subject_fg(
-                raw_fg,
-                self.patch_height,
-                self.patch_width,
-                center_crop=self.backend == "wan_s2v",
-                cover_original=bool(cfg.get("input_mask_cover_original", False)),
-            )
+            head_paths = cfg.get("head_mask_path")
+            if head_paths:
+                self.raw_head_fg = subject_fg_from_background_paths(
+                    head_paths, self.num_frames
+                )
+            self.rebuild_latent_masks()
 
         self._selector_scores: Dict[Any, Any] = {}
         self._pending_selector_scores: Dict[Any, Any] = {}
@@ -182,6 +183,38 @@ class FramePromptRouter:
         self._pending_ref_loc_scores: Dict[
             Tuple[int, int, int], Tuple[torch.Tensor, torch.Tensor]
         ] = {}
+
+    def rebuild_latent_masks(self) -> None:
+        """Downsample stored pixel masks onto the current latent grid."""
+        raw = self.raw_subject_fg
+        if raw is None:
+            return
+        center_crop = self.backend == "wan_s2v"
+        cover_original = bool(self.config.get("input_mask_cover_original", False))
+        cover_head_only = bool(self.config.get("input_mask_cover_head_only", False))
+        if cover_head_only and not cover_original:
+            cover_head_only = False
+        if cover_head_only:
+            if self.raw_head_fg is None:
+                raise ValueError(
+                    "input_mask_cover_head_only=True requires head_mask_path "
+                    '{"0": ..., "1": ...} with SAM3 head BG masks.'
+                )
+            self.subject_fg_masks, self.static_bg = downsample_subject_fg_head_union(
+                raw,
+                self.raw_head_fg,
+                self.patch_height,
+                self.patch_width,
+                center_crop=center_crop,
+            )
+            return
+        self.subject_fg_masks, self.static_bg = downsample_subject_fg(
+            raw,
+            self.patch_height,
+            self.patch_width,
+            center_crop=center_crop,
+            cover_original=cover_original,
+        )
 
     def set_text_embeddings(self, embeddings: List[torch.Tensor]) -> None:
         if len(embeddings) != self.num_segments:

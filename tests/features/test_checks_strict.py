@@ -22,6 +22,14 @@ def test_s2v_ext_size():
 
 
 @pytest.mark.strict
+def test_cover_head_only_requires_head_mask_path():
+    cfg = canonical_config()
+    cfg["input_mask_cover_head_only"] = True
+    with pytest.raises(SceneShifterCheckError):
+        validate_config(cfg)
+
+
+@pytest.mark.strict
 def test_prompt_count():
     cfg = canonical_config(segment_prompts=["only-one"])
     with pytest.raises(SceneShifterCheckError):

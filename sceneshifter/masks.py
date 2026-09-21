@@ -190,6 +190,40 @@ def downsample_subject_fg(
     return subject_flat, ~union_fg
 
 
+def downsample_subject_fg_head_union(
+    subject_fg: torch.Tensor,
+    head_fg: torch.Tensor,
+    height: int,
+    width: int,
+    *,
+    center_crop: bool = False,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Nearest human ∪ cover-downsampled head (Fun ``input_mask_cover_head_only``)."""
+    if tuple(subject_fg.shape[:2]) != tuple(head_fg.shape[:2]):
+        raise ValueError(
+            f"head mask [S,F] {tuple(head_fg.shape[:2])} != human [S,F] {tuple(subject_fg.shape[:2])}"
+        )
+    unions = []
+    for subject in range(int(subject_fg.shape[0])):
+        human = downsample_mask_to_latent(
+            subject_fg[subject].float(),
+            height,
+            width,
+            center_crop=center_crop,
+            cover_original=False,
+        )
+        head = downsample_mask_to_latent(
+            head_fg[subject].float(),
+            height,
+            width,
+            center_crop=center_crop,
+            cover_original=True,
+        )
+        unions.append((torch.maximum(human.float(), head.float()) > 0.5).flatten(1))
+    subject_flat = torch.stack(unions)
+    return subject_flat, ~subject_flat.any(0)
+
+
 def spatial_token_indices(
     start_frame: int,
     end_frame: int,

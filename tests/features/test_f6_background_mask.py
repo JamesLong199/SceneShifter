@@ -45,3 +45,39 @@ def test_cover_original_keeps_sparse_foreground():
     covered = downsample_mask_to_latent(mask, 2, 2, cover_original=True)
     assert not normal.any()
     assert covered.any()
+
+
+@pytest.mark.feature
+def test_cover_head_only_unions_nearest_human_and_cover_head(tmp_path):
+    from sceneshifter.masks import downsample_subject_fg, downsample_subject_fg_head_union
+
+    human = torch.zeros(1, 8, 8, 8)
+    human[..., :4, :4] = 1
+    head = torch.zeros(1, 8, 8, 8)
+    head[..., 6, 6] = 1
+    nearest, _ = downsample_subject_fg(human.bool(), 2, 2)
+    head_cover, _ = downsample_subject_fg(head.bool(), 2, 2, cover_original=True)
+    full_cover, _ = downsample_subject_fg(human.bool(), 2, 2, cover_original=True)
+    union, bg = downsample_subject_fg_head_union(human.bool(), head.bool(), 2, 2)
+    assert nearest.any()
+    assert head_cover.any()
+    assert torch.equal(union, nearest | head_cover)
+    assert int(union.sum().item()) > int(nearest.sum().item())
+    assert not torch.equal(union, full_cover)
+    assert bool((union | bg).all())
+
+    human_path = tmp_path / "human.npy"
+    head_path = tmp_path / "head.npy"
+    # Files are 1=BG, 0=FG.
+    np.save(human_path, (~human[0, 0].bool()).float().numpy())
+    np.save(head_path, (~head[0, 0].bool()).float().numpy())
+    cfg = canonical_config(
+        background_mask_path={"0": str(human_path)},
+        num_frames=8,
+    )
+    cfg["head_mask_path"] = {"0": str(head_path)}
+    cfg["input_mask_cover_original"] = True
+    cfg["input_mask_cover_head_only"] = True
+    router = FramePromptRouter(cfg, patch_height=2, patch_width=2)
+    assert torch.equal(router.subject_fg_masks, union)
+    assert torch.equal(router.static_bg, bg)
