@@ -1061,9 +1061,71 @@ def _clip_plus_text(context: torch.Tensor, text: torch.Tensor) -> Optional[torch
     return None
 
 
+def _multitalk_reference_cross_attention(
+    module: nn.Module,
+    router: FramePromptRouter,
+    x: torch.Tensor,
+    context: torch.Tensor,
+    timestep_idx: int,
+    pass_type: str,
+) -> torch.Tensor:
+    """Match feature MultiTalk's routed text + full-sequence CLIP call graph."""
+    if pass_type == "uncond":
+        raise ValueError("MultiTalk negative cross-attention must use the original module")
+    required = (
+        "q",
+        "k",
+        "v",
+        "k_img",
+        "v_img",
+        "norm_q",
+        "norm_k",
+        "norm_k_img",
+        "o",
+        "num_heads",
+        "head_dim",
+    )
+    if any(not hasattr(module, name) for name in required):
+        raise TypeError("MultiTalk cross-attention module does not match WanI2VCrossAttention")
+    flash = getattr(module, "_ss_official_cross_flash", None)
+    if not callable(flash):
+        raise RuntimeError("MultiTalk cross-attention has no official flash_attention")
+
+    batch = int(x.shape[0])
+    heads = int(module.num_heads)
+    head_dim = int(module.head_dim)
+    q = module.norm_q(module.q(x)).view(batch, -1, heads, head_dim)
+    context_img = context[:, :257]
+    k_img = module.norm_k_img(module.k_img(context_img)).view(batch, -1, heads, head_dim)
+    v_img = module.v_img(context_img).view(batch, -1, heads, head_dim)
+
+    text_out = torch.zeros_like(q)
+    for segment, (start, end) in enumerate(router.segment_bounds):
+        embed_idx = router.selected_text_index(timestep_idx, segment, pass_type)
+        if embed_idx is None:
+            raise RuntimeError("MultiTalk conditional routing has no text index")
+        text = router.text_embeddings[embed_idx]
+        if not torch.is_tensor(text):
+            raise TypeError("MultiTalk segment text embedding is not a tensor")
+        text = text.to(device=context.device, dtype=context.dtype)
+        k_text = module.norm_k(module.k(text)).view(batch, -1, heads, head_dim)
+        v_text = module.v(text).view(batch, -1, heads, head_dim)
+        sl = slice(int(start) * int(router.spatial_tokens), int(end) * int(router.spatial_tokens))
+        text_out[:, sl] = flash(q[:, sl], k_text, v_text, k_lens=None)
+
+    video = int(router.num_frames) * int(router.spatial_tokens)
+    if int(q.shape[1]) != video:
+        raise RuntimeError(
+            f"MultiTalk routed cross-attention expected {video} video tokens, got {int(q.shape[1])}"
+        )
+    img_out = flash(q, k_img, v_img, k_lens=None)
+    return module.o((text_out + img_out).flatten(2))
+
+
 def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter]) -> nn.Module:
     original = module.forward
     module.frame_prompt_router = router
+    module._ss_official_cross_flash = getattr(original, "__globals__", {}).get("flash_attention")
     processor = getattr(module, "processor", None)
     # FantasyTalking I2V audio views Q as ``[B*latent_frames, ...]``. Slicing x
     # per scene makes that view invalid; the adapter wraps the processor instead.
@@ -1099,6 +1161,18 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
         # Official-main also sets context_lens=None before flash.
         if talking:
             args, kwargs = _drop_packed_context_lens(args, kwargs)
+        if (
+            getattr(active_router, "backend", None) == "multitalk"
+            and str(pass_type) != "uncond"
+        ):
+            return _multitalk_reference_cross_attention(
+                self,
+                active_router,
+                x,
+                context,
+                int(timestep_idx),
+                str(pass_type),
+            )
         if not active_router.should_use_segment_prompts(int(timestep_idx), str(pass_type)):
             return original(x, context, *args, **kwargs)
         if getattr(active_router, "backend", None) == "wan_s2v":

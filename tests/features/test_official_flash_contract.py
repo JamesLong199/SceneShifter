@@ -705,3 +705,61 @@ def test_cross_attn_keeps_s2v_extra_tokens():
     out = module(x, context)
     assert out.shape[1] == 34
     assert captured == [34, 12, 20]
+
+
+def test_multitalk_cross_attn_matches_reference_call_structure(monkeypatch):
+    cfg = canonical_config(segment_prompt_start_timestep=3)
+    router = FramePromptRouter(cfg, backend="multitalk", patch_height=2, patch_width=2)
+    router.set_text_embeddings(
+        [
+            torch.full((1, 4, 4), 3.0),
+            torch.full((1, 4, 4), 7.0),
+        ]
+    )
+    calls = []
+
+    def fake_flash(q, k, v, k_lens=None):
+        calls.append((int(q.shape[1]), int(k.shape[1]), float(k.mean())))
+        return q
+
+    class Cross(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.q = nn.Identity()
+            self.k = nn.Identity()
+            self.v = nn.Identity()
+            self.k_img = nn.Identity()
+            self.v_img = nn.Identity()
+            self.norm_q = nn.Identity()
+            self.norm_k = nn.Identity()
+            self.norm_k_img = nn.Identity()
+            self.o = nn.Identity()
+            self.num_heads = 1
+            self.head_dim = 4
+
+        def forward(self, x, context, context_lens=None):
+            return x
+
+    monkeypatch.setitem(Cross.forward.__globals__, "flash_attention", fake_flash)
+    module = Cross()
+    wrap_cross_attention(module, router)
+    module._ss_pass = "cond"
+    x = torch.randn(1, 32, 4)
+    context = torch.cat(
+        [torch.full((1, 257, 4), 11.0), torch.zeros(1, 4, 4)], dim=1
+    )
+
+    module._ss_timestep = 0
+    out = module(x, context)
+    assert torch.equal(out, 2 * x)
+    assert calls == [(12, 4, 3.0), (20, 4, 3.0), (32, 257, 11.0)]
+
+    calls.clear()
+    module._ss_timestep = 3
+    module(x, context)
+    assert calls == [(12, 4, 3.0), (20, 4, 7.0), (32, 257, 11.0)]
+
+    calls.clear()
+    module._ss_pass = "uncond"
+    assert module(x, context) is x
+    assert calls == []
