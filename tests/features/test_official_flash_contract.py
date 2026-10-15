@@ -2,6 +2,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from sceneshifter.adapters.infinitetalk import zero_first_latent_frame_audio
 from sceneshifter.adapters import base as base_adapter
 from sceneshifter.adapters.base import (
     _grid_fhw,
@@ -241,6 +242,21 @@ def test_audio_residual_skipped_before_start():
     assert torch.equal(module(x), torch.zeros_like(x))
     module._ss_timestep = 20
     assert torch.equal(module(x), x + 1)
+
+
+def test_infinitetalk_zeros_audio_on_first_latent_frame():
+    class Audio(nn.Module):
+        def forward(self, x, encoder_hidden_states=None, shape=None, **kwargs):
+            return torch.ones_like(x)
+
+    module = Audio()
+    zero_first_latent_frame_audio(module)
+    x = torch.ones(1, 6, 2)
+    out = module(x, shape=torch.tensor([3, 2, 1]))
+    assert torch.equal(out[:, :2], torch.zeros(1, 2, 2))
+    assert torch.equal(out[:, 2:], torch.ones(1, 4, 2))
+    again = module(x, encoder_hidden_states=torch.zeros(1, 1, 1), shape=(3, 2, 1))
+    assert torch.equal(again, out)
 
 
 def test_unrestricted_collects_ref_loc_without_updating_mask():
