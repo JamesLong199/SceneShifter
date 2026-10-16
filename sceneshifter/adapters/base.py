@@ -495,13 +495,14 @@ def _collect_live_ref_attn(
             f"q/k lengths {int(q.shape[1])}/{int(k.shape[1])}, expected at least "
             f"{video}/{spatial}"
         )
-    # Most Wan ports score in v.dtype; FantasyTalking explicitly promotes
-    # selector Q/K to FP32 before matmul.
+    # Most Wan ports score in v.dtype. FantasyTalking and Wan S2V promote
+    # selector Q/K to FP32. InfiniteTalk Q is FP32 and calculate_x_ref_attn_map
+    # scores the ref-attn map in that dtype, so match it here.
     v = getattr(module, "_ss_v_for_ref", None)
     score_dtype = (
         torch.float32
         if getattr(router, "backend", None)
-        in {"fantasytalking", "wan_s2v"}
+        in {"fantasytalking", "wan_s2v", "infinitetalk"}
         else (v.dtype if torch.is_tensor(v) else q.dtype)
     )
     q_score = q.to(dtype=score_dtype)

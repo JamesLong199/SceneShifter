@@ -709,6 +709,39 @@ def test_fantasy_ref_loc_scores_union_fg_in_fp32(monkeypatch):
     assert seen["targets"][0].bool().tolist() == [True, True, False, False]
 
 
+def test_infinitetalk_ref_loc_scores_in_fp32_when_v_is_bf16(monkeypatch):
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[0, 0]],
+    }
+    router = FramePromptRouter(
+        cfg, backend="infinitetalk", patch_height=2, patch_width=2
+    )
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    seen = {}
+
+    def scores(visual_q, ref_k, shape, targets):
+        seen["q_dtype"] = visual_q.dtype
+        seen["k_dtype"] = ref_k.dtype
+        seen["targets_dtype"] = targets.dtype
+        return torch.zeros(2, 32)
+
+    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 1, 1, dtype=torch.bfloat16)
+    q = torch.randn(1, 32, 1, 1, dtype=torch.float32)
+    k = torch.randn(1, 32, 1, 1, dtype=torch.float32)
+    base_adapter._collect_live_ref_attn(router, module, q, k, 0, 0, "cond")
+    assert seen["q_dtype"] == torch.float32
+    assert seen["k_dtype"] == torch.float32
+    assert seen["targets_dtype"] == torch.float32
+    assert (0, 0, 0) in router._ref_loc_scores
+
+
 def test_fantasy_collects_unscaled_q_but_attention_uses_scaled_q(monkeypatch):
     cfg = canonical_config()
     router = FramePromptRouter(
