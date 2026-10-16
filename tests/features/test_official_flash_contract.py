@@ -427,7 +427,8 @@ def test_unrestricted_collects_ref_loc_without_updating_mask():
     )
     assert captured["k_lens"] is k_lens
     assert router.live_bg is None
-    assert (0, 0, 0) in router._ref_loc_scores
+    assert (0, 0, 0) in router._pending_ref_loc_scores
+    assert (0, 0, 0) not in router._ref_loc_scores
 
 
 def test_freeze_live_mask_still_collects_scores():
@@ -806,6 +807,10 @@ def test_multitalk_selector_scores_use_reference_head_chunks(monkeypatch):
     q = torch.randn(1, 32, 2, 2)
     base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
     assert seen == [(2, 2, torch.bfloat16)]
+    assert (0, 0, 0) in router._pending_ref_loc_scores
+    assert (0, 0, 1) in router._pending_ref_loc_scores
+    assert (0, 0, 0) not in router._ref_loc_scores
+    router.publish_ref_loc_scores()
     assert (0, 0, 0) in router._ref_loc_scores
     assert (0, 0, 1) in router._ref_loc_scores
 

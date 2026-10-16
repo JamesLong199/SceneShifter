@@ -1412,7 +1412,10 @@ def thread_timestep(model: Any) -> None:
         kwargs.pop("t_idx", None)
         kwargs.pop("block_idx", None)
         kwargs.pop("audio_start_timestep", None)
-        return original(*args, **kwargs)
+        out = original(*args, **kwargs)
+        if router is not None and getattr(router, "backend", None) == "multitalk":
+            router.publish_ref_loc_scores()
+        return out
 
     model.forward = types.MethodType(forward, model)
     model._ss_thread_installed = True

@@ -529,7 +529,7 @@ class FramePromptRouter:
     ) -> None:
         target = (
             self._pending_ref_loc_scores
-            if self.backend in {"wan_s2v", "wan_animate", "wan_fun_camera"}
+            if self.backend in {"multitalk", "wan_s2v", "wan_animate", "wan_fun_camera"}
             else self._ref_loc_scores
         )
         target[(int(timestep_idx), int(layer_idx), int(head_idx))] = (
@@ -608,13 +608,22 @@ class FramePromptRouter:
             hole_size=int(params.get("ref_attn_mask_hole_size", 0)),
         )
 
+    def publish_ref_loc_scores(self) -> None:
+        """Make this forward's ref-loc scores visible to the next forward.
+
+        MultiTalk publishes ``fg_scores_per_head_by_layer`` at the end of the
+        model forward, so later layers in the same forward still use the
+        previous step.
+        """
+        if self._pending_ref_loc_scores:
+            self._ref_loc_scores.update(self._pending_ref_loc_scores)
+            self._pending_ref_loc_scores = {}
+
     def complete_denoising_step(self) -> None:
         """Publish backend scores only after every CFG pass in the step."""
         self._selector_scores = dict(self._pending_selector_scores)
         self._pending_selector_scores = {}
-        if self._pending_ref_loc_scores:
-            self._ref_loc_scores.update(self._pending_ref_loc_scores)
-            self._pending_ref_loc_scores = {}
+        self.publish_ref_loc_scores()
         if self.backend in {"wan_s2v", "wan_animate", "wan_fun_camera"}:
             self.live_bg = None
             self.live_subject_fg = None
