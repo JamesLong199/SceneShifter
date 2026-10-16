@@ -529,7 +529,8 @@ class FramePromptRouter:
     ) -> None:
         target = (
             self._pending_ref_loc_scores
-            if self.backend in {"multitalk", "wan_s2v", "wan_animate", "wan_fun_camera"}
+            if self.backend
+            in {"multitalk", "infinitetalk", "wan_s2v", "wan_animate", "wan_fun_camera"}
             else self._ref_loc_scores
         )
         target[(int(timestep_idx), int(layer_idx), int(head_idx))] = (
@@ -611,9 +612,10 @@ class FramePromptRouter:
     def publish_ref_loc_scores(self) -> None:
         """Make this forward's ref-loc scores visible to the next forward.
 
-        MultiTalk publishes ``fg_scores_per_head_by_layer`` at the end of the
-        model forward, so later layers in the same forward still use the
-        previous step.
+        MultiTalk publishes at the end of the model forward, so later layers
+        in that forward still use the previous step. InfiniteTalk does the
+        same during the conditional pass, then the unconditional pass sees
+        the scores collected there.
         """
         if self._pending_ref_loc_scores:
             self._ref_loc_scores.update(self._pending_ref_loc_scores)

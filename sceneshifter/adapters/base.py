@@ -1528,7 +1528,10 @@ def thread_timestep(model: Any) -> None:
         kwargs.pop("block_idx", None)
         kwargs.pop("audio_start_timestep", None)
         out = original(*args, **kwargs)
-        if router is not None and getattr(router, "backend", None) == "multitalk":
+        if router is not None and getattr(router, "backend", None) in {
+            "multitalk",
+            "infinitetalk",
+        }:
             router.publish_ref_loc_scores()
         return out
 

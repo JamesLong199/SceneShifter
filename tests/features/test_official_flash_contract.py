@@ -740,7 +740,15 @@ def test_infinitetalk_ref_loc_scores_in_fp32_when_v_is_bf16(monkeypatch):
     assert seen["q_dtype"] == torch.float32
     assert seen["k_dtype"] == torch.float32
     assert seen["targets_dtype"] == torch.float32
+    # Same-forward layers must not see these scores. The next pass publishes them.
+    assert (0, 0, 0) not in router._ref_loc_scores
+    assert (0, 0, 0) in router._pending_ref_loc_scores
+    assert router.selector_avg_scores(0, [[0, 0]]) == (None, None)
+    router.publish_ref_loc_scores()
     assert (0, 0, 0) in router._ref_loc_scores
+    assert router._pending_ref_loc_scores == {}
+    fg, bg = router.selector_avg_scores(0, [[0, 0]])
+    assert fg is not None and bg is not None
 
 
 def test_fantasy_collects_unscaled_q_but_attention_uses_scaled_q(monkeypatch):
