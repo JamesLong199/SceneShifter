@@ -208,6 +208,15 @@ def test_s2v_scene_mask_preserves_reference_and_framepack_contract(bg_mask_path)
     assert torch.equal(framepack["k_lens"], torch.tensor([39]))
 
 
+def _tiny_text_projector(device: torch.device, dtype: torch.dtype) -> nn.Sequential:
+    torch.manual_seed(0)
+    return nn.Sequential(
+        nn.Linear(8, 16, bias=False),
+        nn.GELU(),
+        nn.Linear(16, 16, bias=False),
+    ).to(device=device, dtype=dtype)
+
+
 def test_project_raw_t5_through_text_embedding():
     router = FramePromptRouter(canonical_config(), patch_height=2, patch_width=2)
     router._text_embedding = nn.Sequential(
@@ -224,6 +233,82 @@ def test_project_raw_t5_through_text_embedding():
     before = router.text_embeddings[0].clone()
     project_router_text_embeddings(router)
     assert torch.equal(router.text_embeddings[0], before)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_cpu_text_projector_runs_on_cuda_and_restores():
+    """CPU-resident text_embedding must matmul on CUDA, then return to CPU."""
+    router = FramePromptRouter(canonical_config(), patch_height=2, patch_width=2)
+    projector = _tiny_text_projector(torch.device("cpu"), torch.bfloat16)
+    router._text_embedding = projector
+    router._text_len = 4
+    first = torch.randn(3, 8, dtype=torch.bfloat16)
+    second = torch.randn(2, 8, dtype=torch.bfloat16)
+    router.set_text_embeddings([first.clone(), second.clone()])
+    weights_before = [param.detach().clone() for param in projector.parameters()]
+    seen = []
+
+    def _record(_module, inputs, _output):
+        seen.append((inputs[0].device.type, next(_module.parameters()).device.type))
+
+    handles = [
+        module.register_forward_hook(_record)
+        for module in projector.modules()
+        if isinstance(module, nn.Linear)
+    ]
+    try:
+        project_router_text_embeddings(router)
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    assert seen == [("cuda", "cuda")] * 4
+    assert all(param.device.type == "cpu" and param.dtype == torch.bfloat16 for param in projector.parameters())
+    for before, after in zip(weights_before, projector.parameters()):
+        assert torch.equal(before, after.detach())
+
+    reference = _tiny_text_projector(torch.device("cpu"), torch.bfloat16)
+    reference.load_state_dict(projector.state_dict())
+    reference.to(device=torch.device("cuda"))
+
+    def _cuda_project(tokens: torch.Tensor) -> torch.Tensor:
+        core = tokens
+        if core.shape[0] < 4:
+            core = torch.cat([core, core.new_zeros(4 - core.shape[0], core.shape[1])], dim=0)
+        else:
+            core = core[:4]
+        return reference(core.unsqueeze(0).to(device=torch.device("cuda"), dtype=torch.bfloat16))
+
+    assert torch.equal(router.text_embeddings[0].cpu(), _cuda_project(first).cpu())
+    assert torch.equal(router.text_embeddings[1].cpu(), _cuda_project(second).cpu())
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_cuda_text_projector_stays_on_cuda():
+    router = FramePromptRouter(canonical_config(), patch_height=2, patch_width=2)
+    projector = _tiny_text_projector(torch.device("cuda"), torch.bfloat16)
+    router._text_embedding = projector
+    router._text_len = 4
+    router.set_text_embeddings(
+        [
+            torch.randn(3, 8, dtype=torch.bfloat16),
+            torch.randn(2, 8, dtype=torch.bfloat16),
+        ]
+    )
+    storage = [param.data_ptr() for param in projector.parameters()]
+    moves = []
+    original_to = projector.to
+
+    def _track_to(*args, **kwargs):
+        moves.append((args, kwargs))
+        return original_to(*args, **kwargs)
+
+    projector.to = _track_to
+    project_router_text_embeddings(router)
+    assert moves == []
+    assert [param.data_ptr() for param in projector.parameters()] == storage
+    assert all(param.device.type == "cuda" and param.dtype == torch.bfloat16 for param in projector.parameters())
+    assert router.text_embeddings[0].device.type == "cuda"
 
 
 def test_audio_residual_skipped_before_start():

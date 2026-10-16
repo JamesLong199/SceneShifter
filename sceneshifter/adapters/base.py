@@ -257,6 +257,18 @@ def attach_text_projector(router: Optional[FramePromptRouter], model: Any) -> No
     project_router_text_embeddings(router)
 
 
+def _gpu_device_for_cpu_projector(proj_device: torch.device) -> Optional[torch.device]:
+    """Match official ``model.forward``, which projects text after the DiT is on GPU.
+
+    Unified capture runs while ``init_on_cpu`` still leaves ``text_embedding`` on
+    CPU. CPU and CUDA bfloat16 matmuls are not bit-identical, so a CPU projection
+    makes routed text K/V diverge from the context built later on GPU.
+    """
+    if proj_device.type != "cpu" or not torch.cuda.is_available():
+        return None
+    return torch.device("cuda", torch.cuda.current_device())
+
+
 def project_router_text_embeddings(router: Optional[FramePromptRouter]) -> None:
     """Pad raw T5 tokens to ``text_len`` and run official ``text_embedding`` (4096→5120)."""
     if router is None or not getattr(router, "text_embeddings", None):
@@ -273,27 +285,49 @@ def project_router_text_embeddings(router: Optional[FramePromptRouter]) -> None:
         proj_device, proj_dtype = proj_param.device, proj_param.dtype
     except StopIteration:
         proj_device, proj_dtype = torch.device("cpu"), torch.float32
-    for emb in router.text_embeddings:
-        if not torch.is_tensor(emb):
-            projected.append(emb)
-            continue
-        core = emb[0] if emb.ndim == 3 and emb.shape[0] == 1 else emb
-        if core.ndim != 2:
-            projected.append(emb)
-            continue
-        if out_dim is not None and int(core.shape[-1]) == out_dim:
-            projected.append(emb if emb.ndim == 3 else emb.unsqueeze(0))
-            continue
-        if in_dim is not None and int(core.shape[-1]) != in_dim:
-            projected.append(emb)
-            continue
-        if core.shape[0] < text_len:
-            core = torch.cat([core, core.new_zeros(text_len - core.shape[0], core.shape[1])], dim=0)
-        else:
-            core = core[:text_len]
-        out = projector(core.unsqueeze(0).to(device=proj_device, dtype=proj_dtype))
-        projected.append(out)
-        changed = True
+    compute_device = proj_device
+    restore_device: Optional[torch.device] = None
+    gpu_device = _gpu_device_for_cpu_projector(proj_device)
+
+    def _project_on_gpu() -> None:
+        nonlocal compute_device, restore_device
+        if gpu_device is None or restore_device is not None:
+            return
+        # Only the two text linears move. Restore them so the 14B DiT stays offloaded.
+        restore_device = proj_device
+        projector.to(device=gpu_device)
+        compute_device = gpu_device
+
+    try:
+        for emb in router.text_embeddings:
+            if not torch.is_tensor(emb):
+                projected.append(emb)
+                continue
+            core = emb[0] if emb.ndim == 3 and emb.shape[0] == 1 else emb
+            if core.ndim != 2:
+                projected.append(emb)
+                continue
+            if out_dim is not None and int(core.shape[-1]) == out_dim:
+                projected.append(emb if emb.ndim == 3 else emb.unsqueeze(0))
+                continue
+            if in_dim is not None and int(core.shape[-1]) != in_dim:
+                projected.append(emb)
+                continue
+            if core.shape[0] < text_len:
+                core = torch.cat(
+                    [core, core.new_zeros(text_len - core.shape[0], core.shape[1])], dim=0
+                )
+            else:
+                core = core[:text_len]
+            _project_on_gpu()
+            out = projector(core.unsqueeze(0).to(device=compute_device, dtype=proj_dtype))
+            projected.append(out)
+            changed = True
+    finally:
+        if restore_device is not None:
+            if compute_device.type == "cuda":
+                torch.cuda.synchronize(compute_device)
+            projector.to(device=restore_device)
     if changed:
         router.text_embeddings = projected
 
