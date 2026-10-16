@@ -779,7 +779,7 @@ def test_fantasy_collects_unscaled_q_but_attention_uses_scaled_q(monkeypatch):
     assert all(torch.equal(value, torch.full_like(value, 2.0)) for value in attended)
 
 
-def test_multitalk_selector_heads_use_memory_safe_individual_calls(monkeypatch):
+def test_multitalk_selector_scores_use_reference_head_chunks(monkeypatch):
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["params"] = {
         "mask_type": "ref_attn",
@@ -793,22 +793,19 @@ def test_multitalk_selector_heads_use_memory_safe_individual_calls(monkeypatch):
     router.static_bg = ~router.subject_fg_masks.any(0)
     seen = []
 
-    def scores(visual_q, ref_k, shape, targets, head_mask=None):
-        seen.append(
-            (
-                int(visual_q.shape[2]),
-                None if head_mask is None else head_mask.tolist(),
-            )
-        )
-        return torch.zeros(2, 32)
+    def scores(visual_q, ref_k, shape, targets, *, split_num=2):
+        seen.append((int(visual_q.shape[2]), int(split_num), visual_q.dtype))
+        return torch.zeros(2, 32, int(visual_q.shape[2]), dtype=visual_q.dtype)
 
-    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
+    monkeypatch.setattr(
+        base_adapter, "get_attn_map_with_target_per_head_split", scores
+    )
     module = _Attn()
     module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
-    module._ss_v_for_ref = torch.zeros(1, 32, 2, 2)
+    module._ss_v_for_ref = torch.zeros(1, 32, 2, 2, dtype=torch.bfloat16)
     q = torch.randn(1, 32, 2, 2)
     base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
-    assert seen == [(1, None), (1, None)]
+    assert seen == [(2, 2, torch.bfloat16)]
     assert (0, 0, 0) in router._ref_loc_scores
     assert (0, 0, 1) in router._ref_loc_scores
 

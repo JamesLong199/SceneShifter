@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Optional, Tuple
 
 import numpy as np
@@ -261,6 +262,74 @@ def get_attn_map_with_target_per_head(
         return None
     stacked = torch.stack(maps, dim=0)
     return stacked
+
+
+def _reference_chunk_class_maps(
+    visual_q: torch.Tensor,
+    ref_k: torch.Tensor,
+    ref_target_masks: torch.Tensor,
+) -> torch.Tensor:
+    """One reference ``calculate_x_ref_attn_map(..., mode='none')`` chunk.
+
+    Returns ``[C, seq, chunk_heads]`` for batch 1, in ``visual_q.dtype``.
+    """
+    if int(visual_q.shape[0]) != 1:
+        raise ValueError("reference per-head chunks expect batch 1")
+    ref_k = ref_k.to(dtype=visual_q.dtype, device=visual_q.device)
+    scale = 1.0 / visual_q.shape[-1] ** 0.5
+    query = (visual_q * scale).transpose(1, 2)
+    key = ref_k.transpose(1, 2)
+    source = (query @ key.transpose(-2, -1)).softmax(dim=-1).to(dtype=visual_q.dtype)
+    targets = ref_target_masks.to(dtype=visual_q.dtype, device=visual_q.device)
+    maps = []
+    for ref_target_mask in targets:
+        mask = ref_target_mask[None, None, None, ...]
+        per_head = (source * mask).sum(-1) / mask.sum()
+        maps.append(per_head.permute(0, 2, 1))
+    return torch.concat(maps, dim=0)
+
+
+def get_attn_map_with_target_per_head_split(
+    visual_q: torch.Tensor,
+    ref_k: torch.Tensor,
+    shape,
+    ref_target_masks: torch.Tensor,
+    *,
+    split_num: int = 2,
+) -> Optional[torch.Tensor]:
+    """Reference MultiTalk per-head maps, chunked by ``split_num``.
+
+    ``split_num=2`` on 40 heads is two bfloat16 matmuls of 20 heads, matching
+    ``get_attn_map_with_target_per_head``. Temporary; the one-head path is cheaper.
+    Returns ``[C, seq, heads]`` in ``visual_q.dtype``.
+    """
+    if torch.is_tensor(shape):
+        _n_t, n_h, n_w = (int(shape[0]), int(shape[1]), int(shape[2]))
+    else:
+        _n_t, n_h, n_w = (int(value) for value in shape)
+    spatial = int(n_h * n_w)
+    ref_k = ref_k[:, :spatial]
+    _, seq_len, heads, _ = visual_q.shape
+    output = torch.full(
+        (int(ref_target_masks.shape[0]), seq_len, heads),
+        float("nan"),
+        device=visual_q.device,
+        dtype=visual_q.dtype,
+    )
+    split_chunk = int(math.ceil(float(heads) / float(split_num)))
+    filled = 0
+    for head_start in range(0, heads, split_chunk):
+        head_end = min(heads, head_start + split_chunk)
+        chunk = _reference_chunk_class_maps(
+            visual_q[:, :, head_start:head_end, :],
+            ref_k[:, :, head_start:head_end, :],
+            ref_target_masks,
+        )
+        output[:, :, head_start:head_end] = chunk
+        filled += head_end - head_start
+    if filled <= 0:
+        return None
+    return output
 
 
 def derive_live_fg_from_class_scores(

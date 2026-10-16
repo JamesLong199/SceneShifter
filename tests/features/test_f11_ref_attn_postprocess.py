@@ -9,6 +9,7 @@ from sceneshifter.ref_attn import (
     get_attn_map_with_target_chunked,
     get_attn_map_with_target_per_head,
     get_attn_map_with_target_per_head_chunked,
+    get_attn_map_with_target_per_head_split,
     live_bg_from_subject_fg,
     postprocess_live_fg,
 )
@@ -155,3 +156,22 @@ def test_multitalk_numpy_class_mask_is_mutually_exclusive():
         [True, False, False, False],
         [False, True, False, False],
     ]
+
+
+def test_reference_head_chunks_isolate_groups():
+    torch.manual_seed(0)
+    q = torch.randn(1, 8, 4, 4, dtype=torch.bfloat16)
+    k = torch.randn(1, 8, 4, 4, dtype=torch.bfloat16)
+    targets = torch.tensor([[1, 0, 0, 0], [0, 1, 1, 1]], dtype=torch.bfloat16)
+    shape = (2, 2, 2)
+    full = get_attn_map_with_target_per_head_split(
+        q, k, shape, targets, split_num=2
+    )
+    q_other = q.clone()
+    q_other[:, :, 2:] = torch.randn_like(q_other[:, :, 2:])
+    other = get_attn_map_with_target_per_head_split(
+        q_other, k, shape, targets, split_num=2
+    )
+    assert full.shape == (2, 8, 4)
+    assert torch.equal(full[:, :, :2], other[:, :, :2])
+    assert not torch.equal(full[:, :, 2:], other[:, :, 2:])

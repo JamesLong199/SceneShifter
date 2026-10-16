@@ -19,6 +19,7 @@ from ..parity.trace import trace_tensor
 from ..ref_attn import (
     get_attn_map_with_target,
     get_attn_map_with_target_per_head_chunked,
+    get_attn_map_with_target_per_head_split,
 )
 from ..router import FramePromptRouter
 
@@ -560,8 +561,20 @@ def _collect_live_ref_attn(
     }
     backend = getattr(router, "backend", None)
     individual_scores = None
+    split_scores = None
     try:
-        if backend in {"multitalk", "wan_animate"}:
+        if backend == "multitalk":
+            # Temporary match of reference split_num=2 (20-head bf16 chunks).
+            split_scores = get_attn_map_with_target_per_head_split(
+                q_for_scores,
+                k_for_scores,
+                shape,
+                targets,
+                split_num=2,
+            )
+            scores = None
+            per_head_scores = None
+        elif backend == "wan_animate":
             individual_scores = {}
             for head in valid_heads:
                 individual_scores[head] = get_attn_map_with_target(
@@ -608,12 +621,33 @@ def _collect_live_ref_attn(
             f"{router.backend} ref-attn selector L{int(block_idx)} heads "
             f"{valid_heads} score collection failed"
         ) from exc
-    if scores is None and per_head_scores is None and individual_scores is None:
+    if (
+        scores is None
+        and per_head_scores is None
+        and individual_scores is None
+        and split_scores is None
+    ):
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} heads "
             f"{valid_heads} returned no scores"
         )
-    if individual_scores is not None:
+    if split_scores is not None:
+        if (
+            int(split_scores.shape[0]) != num_subjects + 1
+            or int(split_scores.shape[1]) != video
+            or int(split_scores.shape[2]) != int(q_for_scores.shape[2])
+        ):
+            raise RuntimeError(
+                f"{router.backend} ref-attn selector L{int(block_idx)} "
+                f"chunked score shape {tuple(split_scores.shape)} does not match "
+                f"classes={num_subjects + 1} video={video} heads={int(q_for_scores.shape[2])}"
+            )
+        for head in valid_heads:
+            column = split_scores[:, :, int(head)]
+            fg = column[:num_subjects].reshape(num_subjects, router.num_frames, spatial)
+            bg = column[num_subjects].reshape(router.num_frames, spatial)
+            router.store_ref_loc_head(timestep_idx, int(block_idx), int(head), fg, bg)
+    elif individual_scores is not None:
         for head, head_scores in individual_scores.items():
             if head_scores is None or int(head_scores.shape[1]) != video:
                 raise RuntimeError(
