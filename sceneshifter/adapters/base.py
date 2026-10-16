@@ -95,8 +95,12 @@ def wrap_audio_attention(module: nn.Module, router: Optional[FramePromptRouter])
     def forward(self, x, *args, **kwargs):
         active = getattr(self, "frame_prompt_router", None)
         timestep_idx = int(getattr(self, "_ss_timestep", 0) or 0)
-        start = int(getattr(active, "audio_start_timestep", 0) or 0) if active is not None else 0
-        if active is not None and int(timestep_idx) < start:
+        start = (
+            int(getattr(active, "audio_start_timestep", 0) or 0)
+            if active is not None
+            else int(getattr(self, "_ss_audio_start_timestep", 0) or 0)
+        )
+        if int(timestep_idx) < start:
             return torch.zeros_like(x)
         return original(x, *args, **kwargs)
 

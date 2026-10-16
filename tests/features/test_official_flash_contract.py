@@ -244,6 +244,48 @@ def test_audio_residual_skipped_before_start():
     assert torch.equal(module(x), x + 1)
 
 
+def test_audio_residual_skipped_without_routing_router():
+    class Audio(nn.Module):
+        def forward(self, x, **kwargs):
+            return x + 1
+
+    module = Audio()
+    wrap_audio_attention(module, None)
+    module._ss_audio_start_timestep = 1000
+    module._ss_timestep = 0
+    x = torch.zeros(1, 4, 2)
+    assert torch.equal(module(x), torch.zeros_like(x))
+
+
+def test_disabled_talking_routing_still_gates_audio_residual():
+    from sceneshifter.parity.unified import _maybe_gate_talking_audio_cfg
+
+    class Audio(nn.Module):
+        def forward(self, x, **kwargs):
+            return x + 1
+
+    class DiT(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.audio_cross_attn = Audio()
+
+        def forward(self, x, **kwargs):
+            return x
+
+    dit = DiT()
+    wrap_audio_attention(dit.audio_cross_attn, None)
+    _maybe_gate_talking_audio_cfg(
+        dit,
+        None,
+        "multitalk",
+        {"enabled": False, "audio_start_timestep": 1000},
+    )
+    dit.audio_cross_attn._ss_timestep = 0
+    x = torch.zeros(1, 4, 2)
+    assert dit.audio_cross_attn._ss_audio_start_timestep == 1000
+    assert torch.equal(dit.audio_cross_attn(x), torch.zeros_like(x))
+
+
 def test_infinitetalk_zeros_audio_on_first_latent_frame():
     class Audio(nn.Module):
         def forward(self, x, encoder_hidden_states=None, shape=None, **kwargs):
