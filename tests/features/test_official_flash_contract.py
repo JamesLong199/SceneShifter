@@ -815,6 +815,48 @@ def test_multitalk_selector_scores_use_reference_head_chunks(monkeypatch):
     assert (0, 0, 1) in router._ref_loc_scores
 
 
+def test_multitalk_new_scene_scores_use_local_rope(monkeypatch):
+    from sceneshifter.rope import rope_apply
+
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[0, 0]],
+        "auto_q_scale": True,
+        "q_scale_bg_only": False,
+        "q_scale": 0.5,
+    }
+    router = FramePromptRouter(cfg, backend="multitalk", patch_height=2, patch_width=2)
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    pre = torch.randn(1, 32, 2, 6)
+    global_q = torch.randn(1, 32, 2, 6)
+    freqs = torch.randn(16, 3, dtype=torch.float64) + 1j * torch.randn(16, 3, dtype=torch.float64)
+    seen = []
+
+    def scores(visual_q, ref_k, shape, targets, *, split_num=2):
+        seen.append(visual_q.detach().clone())
+        return torch.zeros(
+            2, int(visual_q.shape[1]), int(visual_q.shape[2]), dtype=visual_q.dtype
+        )
+
+    monkeypatch.setattr(base_adapter, "get_attn_map_with_target_per_head_split", scores)
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 2, 6, dtype=torch.bfloat16)
+    module._ss_q_pre_rope = pre
+    module._ss_freqs = freqs
+    base_adapter._collect_live_ref_attn(router, module, global_q, global_q, 0, 0, "cond")
+
+    assert [int(q.shape[1]) for q in seen] == [12, 20]
+    assert torch.equal(seen[0], global_q.to(torch.bfloat16)[:, :12])
+    scaled = pre.clone()
+    scaled[:, 12:] *= 0.5
+    expected = rope_apply(scaled[:, 12:], torch.tensor([[5, 2, 2]]), freqs).to(torch.bfloat16)
+    assert torch.equal(seen[1], expected)
+    assert (0, 0, 0) in router._pending_ref_loc_scores
+
+
 def test_animate_uses_memory_safe_model_dtype_selector_calls(monkeypatch):
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["params"] = {

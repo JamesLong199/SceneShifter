@@ -21,6 +21,7 @@ from ..ref_attn import (
     get_attn_map_with_target_per_head_chunked,
     get_attn_map_with_target_per_head_split,
 )
+from ..rope import rope_apply
 from ..router import FramePromptRouter
 
 _CURRENT_MODULE: contextvars.ContextVar[Optional[nn.Module]] = contextvars.ContextVar(
@@ -564,14 +565,34 @@ def _collect_live_ref_attn(
     split_scores = None
     try:
         if backend == "multitalk":
-            # Temporary match of reference split_num=2 (compiled 20-head bf16 chunks).
-            split_scores = get_attn_map_with_target_per_head_split(
-                q_for_scores,
-                k_for_scores,
-                shape,
-                targets,
-                split_num=2,
-            )
+            # Temporary: compiled 20-head chunks, and once the scene schedule is
+            # on, new-scene score queries use local RoPE. Attention Q stays global.
+            pre_rope = getattr(module, "_ss_q_pre_rope", None)
+            freqs = getattr(module, "_ss_freqs", None)
+            scene_block = router.active_block(int(timestep_idx), int(block_idx), pass_type)
+            if (
+                torch.is_tensor(pre_rope)
+                and torch.is_tensor(freqs)
+                and scene_block is not None
+            ):
+                split_scores = _multitalk_local_rope_scores(
+                    q_for_scores,
+                    k_for_scores,
+                    shape,
+                    targets,
+                    pre_rope,
+                    freqs,
+                    router,
+                    scene_block,
+                )
+            else:
+                split_scores = get_attn_map_with_target_per_head_split(
+                    q_for_scores,
+                    k_for_scores,
+                    shape,
+                    targets,
+                    split_num=2,
+                )
             scores = None
             per_head_scores = None
         elif backend == "wan_animate":
@@ -989,6 +1010,91 @@ def scene_masked_official_flash(
     return out
 
 
+def _install_multitalk_prerope_stash(globals_dict: Dict[str, Any]) -> None:
+    """Remember the pre-RoPE query from the first ``rope_apply`` in this forward.
+
+    MultiTalk's ref-attn score rebuilds new-scene queries from that tensor.
+    The official attention call still uses the globally rotated Q.
+    """
+    if globals_dict.get("_ss_rope_patched"):
+        return
+    orig = globals_dict.get("rope_apply")
+    if not callable(orig):
+        return
+
+    def wrapped(x, grid_sizes, freqs, *args, **kwargs):
+        module = _CURRENT_MODULE.get()
+        router = getattr(module, "frame_prompt_router", None) if module is not None else None
+        if (
+            module is not None
+            and getattr(router, "backend", None) == "multitalk"
+            and not getattr(module, "_ss_rope_q_saved", False)
+        ):
+            module._ss_q_pre_rope = x.detach()
+            module._ss_freqs = freqs.detach() if torch.is_tensor(freqs) else freqs
+            module._ss_rope_q_saved = True
+        return orig(x, grid_sizes, freqs, *args, **kwargs)
+
+    globals_dict["rope_apply"] = wrapped
+    globals_dict["_ss_rope_patched"] = True
+
+
+def _multitalk_local_rope_scores(
+    q_global: torch.Tensor,
+    k: torch.Tensor,
+    shape: Tuple[int, int, int],
+    targets: torch.Tensor,
+    pre_rope: torch.Tensor,
+    freqs: torch.Tensor,
+    router: FramePromptRouter,
+    block: Dict[str, Any],
+) -> torch.Tensor:
+    """Score each scene the way MultiTalk does once routing is on.
+
+    Scene 0 keeps the globally rotated query. Later scenes are scaled, then
+    rotated with temporal indices starting at 0. Keys stay the full sequence.
+    """
+    _frames, height, width = shape
+    spatial = int(router.spatial_tokens)
+    video = int(router.num_frames) * spatial
+    if int(pre_rope.shape[1]) < video:
+        raise RuntimeError(
+            f"multitalk pre-RoPE query length {int(pre_rope.shape[1])} < {video}"
+        )
+    params = block.get("params") or {}
+    frame_index_scale = int(params.get("rope_frame_upsample_factor", 1) or 1)
+    scaled_pre = router.apply_q_scale(pre_rope[:, :video], block)
+    parts = []
+    for index, (start, end) in enumerate(router.segment_bounds):
+        token_start = int(start) * spatial
+        token_end = int(end) * spatial
+        if index == 0:
+            query = q_global[:, token_start:token_end]
+        else:
+            seg_frames = int(end) - int(start)
+            grid = torch.tensor(
+                [[seg_frames, int(height), int(width)]] * int(scaled_pre.shape[0]),
+                device=scaled_pre.device,
+                dtype=torch.long,
+            )
+            local = rope_apply(
+                scaled_pre[:, token_start:token_end],
+                grid,
+                freqs,
+                frame_index_scale=frame_index_scale,
+            )
+            query = local.to(dtype=q_global.dtype)
+        part = get_attn_map_with_target_per_head_split(
+            query,
+            k,
+            shape,
+            targets,
+            split_num=2,
+        )
+        parts.append(part)
+    return torch.cat(parts, dim=1)
+
+
 def _install_flash_intercept(globals_dict: Dict[str, Any]) -> bool:
     if globals_dict.get("_ss_flash_patched"):
         return True
@@ -1042,8 +1148,14 @@ def wrap_self_attention(
 
     if patched_official:
 
+        if getattr(router, "backend", None) == "multitalk":
+            _install_multitalk_prerope_stash(globals_dict)
+
         def forward(self, *args, **kwargs):
             _stash_grid_sizes(self, args, kwargs)
+            self._ss_rope_q_saved = False
+            self._ss_q_pre_rope = None
+            self._ss_freqs = None
             active_router = getattr(self, "frame_prompt_router", None)
             if (
                 active_router is not None
@@ -1058,6 +1170,9 @@ def wrap_self_attention(
             finally:
                 _CURRENT_MODULE.reset(token)
                 self._ss_v_for_ref = None
+                self._ss_q_pre_rope = None
+                self._ss_freqs = None
+                self._ss_rope_q_saved = False
 
         module.forward = types.MethodType(forward, module)
         return module
