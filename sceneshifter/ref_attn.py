@@ -289,6 +289,12 @@ def _reference_chunk_class_maps(
     return torch.concat(maps, dim=0)
 
 
+# Eager 20-head chunks match one-head calls. The reference scorer is
+# torch.compile'd, and that kernel is what changes the low bits.
+if torch.cuda.is_available():
+    _reference_chunk_class_maps = torch.compile(_reference_chunk_class_maps)
+
+
 def get_attn_map_with_target_per_head_split(
     visual_q: torch.Tensor,
     ref_k: torch.Tensor,

@@ -564,7 +564,7 @@ def _collect_live_ref_attn(
     split_scores = None
     try:
         if backend == "multitalk":
-            # Temporary match of reference split_num=2 (20-head bf16 chunks).
+            # Temporary match of reference split_num=2 (compiled 20-head bf16 chunks).
             split_scores = get_attn_map_with_target_per_head_split(
                 q_for_scores,
                 k_for_scores,
