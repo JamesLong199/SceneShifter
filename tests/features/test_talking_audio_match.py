@@ -4,6 +4,7 @@ from sceneshifter.adapters.talking_audio import (
     accumulate_reference_ref_map,
     multitalk_audio_key_positions,
     multitalk_audio_query_positions,
+    reference_audio_map_weight,
 )
 
 
@@ -11,6 +12,22 @@ class _Rope:
     class_interval = 4
     class_range = 24
     rope_bak = 12
+
+
+def test_audio_map_weight_is_the_query_length():
+    chunk = torch.zeros(1, 32256, 20, 8)
+    assert reference_audio_map_weight(chunk) == 32256
+
+
+def test_query_length_bf16_rescale_differs_from_head_count():
+    torch.manual_seed(0)
+    first = torch.randn(3, 8, dtype=torch.bfloat16)
+    second = torch.randn(3, 8, dtype=torch.bfloat16)
+    by_tokens = accumulate_reference_ref_map([first, second], [32256, 32256])
+    by_heads = accumulate_reference_ref_map([first, second], [20, 20])
+    official = (first + second) / 2
+    assert not torch.equal(by_tokens, by_heads)
+    assert not torch.equal(by_tokens, official)
 
 
 def test_reference_ref_map_reduction_matches_bf16_rescale():

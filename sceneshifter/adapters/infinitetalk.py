@@ -96,5 +96,5 @@ class InfiniteTalkAdapter(Adapter):
             bound.append(zero_first_latent_frame_audio(module))
         thread_timestep(model)
         print("[infinitetalk] zero audio residual on latent frame 0", flush=True)
-        print("[infinitetalk] ref map uses reference bf16 head-count reduction", flush=True)
+        print("[infinitetalk] ref map uses reference bf16 query-length reduction", flush=True)
         return bound

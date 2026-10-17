@@ -1,10 +1,11 @@
 """Match feature-branch talking-head audio details from outside the locked tree.
 
 MultiTalk reference audio RoPE snaps each query to a subject center. Its
-person map is one mean over every head (``split_num=1``), then multiplied
-by the head count and divided back in bf16. InfiniteTalk keeps two head
-chunks (``split_num=2``) but uses that same bf16 rescale, which is not the
-official ``(mean0 + mean1) / 2``.
+person map is one mean over every head (``split_num=1``). InfiniteTalk keeps
+two head chunks (``split_num=2``). Both then rescale that mean in bf16 by the
+query length: ``calculate_x_ref_attn_map`` transposes ``[B, seq, heads, dim]``
+and, when no head mask is passed, uses ``shape[2]``. That is not the official
+``(mean0 + mean1) / 2`` and not a rescale by the head count.
 """
 
 from __future__ import annotations
@@ -16,13 +17,22 @@ from typing import Any, Optional
 import torch
 
 
-def accumulate_reference_ref_map(chunk_means: list[torch.Tensor], head_counts: list[int]) -> Optional[torch.Tensor]:
+def reference_audio_map_weight(visual_q_chunk: torch.Tensor) -> int:
+    """Token count used when the audio call does not pass a head mask.
+
+    Reference ``calculate_x_ref_attn_map`` receives ``[B, seq, heads, dim]``,
+    transposes it to ``[B, heads, seq, dim]``, and reads ``shape[2]``.
+    """
+    return int(visual_q_chunk.shape[1])
+
+
+def accumulate_reference_ref_map(chunk_means: list[torch.Tensor], weights: list[int]) -> Optional[torch.Tensor]:
     """Reference ``get_attn_map_with_target`` reduction, including bf16 rounding."""
     if not chunk_means:
         return None
     acc = torch.zeros_like(chunk_means[0])
     total = 0
-    for maps, count in zip(chunk_means, head_counts):
+    for maps, count in zip(chunk_means, weights):
         count = int(count)
         if count <= 0:
             continue
@@ -62,7 +72,7 @@ def install_reference_ref_map(module: Any, *, split_num: int) -> None:
         enable_sp=False,
         head_mask=None,
     ):
-        del head_mask  # official calculate has no head mask; audio calls omit it
+        del head_mask  # audio calls omit it; the reference then weights by query length
         _n_t, n_h, n_w = shape
         if enable_sp and get_sp_group is not None:
             ref_k = get_sp_group().all_gather(ref_k, dim=1)
@@ -75,8 +85,9 @@ def install_reference_ref_map(module: Any, *, split_num: int) -> None:
         total = 0
         for head_start in range(0, int(heads), chunk):
             head_end = min(int(heads), head_start + chunk)
+            query_chunk = visual_q[:, :, head_start:head_end, :]
             result = calculate(
-                visual_q[:, :, head_start:head_end, :],
+                query_chunk,
                 ref_k[:, :, head_start:head_end, :],
                 ref_target_masks,
             )
@@ -85,7 +96,7 @@ def install_reference_ref_map(module: Any, *, split_num: int) -> None:
                 selected = int(selected.item()) if torch.is_tensor(selected) else int(selected)
             else:
                 maps = result
-                selected = int(head_end - head_start)
+                selected = reference_audio_map_weight(query_chunk)
             if selected <= 0:
                 continue
             acc += maps * float(selected)
