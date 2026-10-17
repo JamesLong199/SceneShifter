@@ -240,22 +240,34 @@ def spatial_token_indices(
     return torch.where(selected.reshape(-1))[0]
 
 
-def token_union_upgrade(
-    prev_keep: Iterable[int],
-    prev_frames: Iterable[int],
+def upgrade_context_token_indices(
+    keep: torch.Tensor,
     context_frames: Iterable[int],
     spatial_tokens: int,
-) -> List[int]:
-    """Previous-scene tokens: FG-only except context frames which become full."""
-    keep = set(int(v) for v in prev_keep)
-    context = set(int(v) for v in context_frames)
-    L = int(spatial_tokens)
-    indices: List[int] = []
-    for frame in prev_frames:
-        frame = int(frame)
-        base = frame * L
-        if frame in context:
-            indices.extend(range(base, base + L))
-        else:
-            indices.extend(base + t for t in sorted(keep))
-    return indices
+) -> torch.Tensor:
+    """Keep each frame's own tokens, then replace context frames with every spatial token.
+
+    ``keep`` holds absolute token indices already filtered by the schedule row.
+    Non-context frames stay as they are. Context frames drop that filter and
+    contribute ``spatial_tokens`` consecutive indices.
+    """
+    device = keep.device
+    keep = keep.to(dtype=torch.long)
+    length = int(spatial_tokens)
+    frames = sorted({int(frame) for frame in context_frames})
+    if frames and int(keep.numel()) > 0:
+        token_frames = torch.div(keep, length, rounding_mode="floor")
+        drop = torch.zeros(keep.shape[0], dtype=torch.bool, device=device)
+        for frame in frames:
+            drop |= token_frames == frame
+        keep = keep[~drop]
+    full = [
+        torch.arange(frame * length, (frame + 1) * length, device=device, dtype=torch.long)
+        for frame in frames
+    ]
+    if full:
+        extra = torch.cat(full)
+        keep = extra if int(keep.numel()) == 0 else torch.cat([keep, extra])
+    if int(keep.numel()) == 0:
+        return keep
+    return torch.unique(keep, sorted=True)

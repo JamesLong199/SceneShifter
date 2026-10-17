@@ -14,7 +14,7 @@ from .masks import (
     identity_self_attention_mask,
     spatial_token_indices,
     subject_fg_from_background_paths,
-    token_union_upgrade,
+    upgrade_context_token_indices,
 )
 from .policy import active_block as policy_active_block
 from .policy import attention_row, normalize_schedule
@@ -328,6 +328,23 @@ class FramePromptRouter:
     def attention_row(self, block: Dict[str, Any], segment: int, query_region: Optional[str] = None):
         return attention_row(block, segment, query_region)
 
+    def _key_row(self, block: Dict[str, Any], segment: int, query_region: Optional[str]):
+        """Schedule row for key gathering. A collapsed split uses the reference merge."""
+        row = block["_mask"][int(segment)]
+        if isinstance(row, dict) and query_region is None:
+            merged = []
+            for fg, bg in zip(row["fg"], row["bg"]):
+                fg_on, fg_region = fg
+                bg_on, bg_region = bg
+                if fg_on == 0 and bg_on == 0:
+                    merged.append((0, "full"))
+                elif fg_on == 1 and bg_on == 1:
+                    merged.append((1, fg_region if fg_region == bg_region else "full"))
+                else:
+                    merged.append((1, fg_region if fg_on == 1 else bg_region))
+            return merged
+        return self.attention_row(block, segment, query_region)
+
     def background_mask(self, device: torch.device) -> Optional[torch.Tensor]:
         mask = self.live_bg if self.live_bg is not None else self.static_bg
         return None if mask is None else mask.to(device=device)
@@ -356,8 +373,18 @@ class FramePromptRouter:
     ) -> torch.Tensor:
         """Noisy-axis K/V indices. Adapters union extras (FramePack, text)."""
         device = device or torch.device("cpu")
-        row = self.attention_row(block, int(query_segment), query_region)
+        row = self._key_row(block, int(query_segment), query_region)
         bg = self.background_mask(device)
+        context_frames: List[int] = []
+        if (
+            include_transition
+            and timestep_idx is not None
+            and self.should_apply_transition_context(timestep_idx)
+        ):
+            for window in self.get_transition_context_windows():
+                if int(window["new_segment"]) == int(query_segment):
+                    context_frames.extend(int(frame) for frame in window["context_frames"])
+        prev_segment = int(query_segment) - 1
         selected = []
         for key_segment, (active, region) in enumerate(row):
             if not active:
@@ -366,29 +393,25 @@ class FramePromptRouter:
             local = spatial_token_indices(
                 start, end, self.spatial_tokens, region, bg, device
             )
-            selected.append(local + start * self.spatial_tokens)
-        if (
-            include_transition
-            and timestep_idx is not None
-            and self.should_apply_transition_context(timestep_idx)
-        ):
-            for window in self.get_transition_context_windows():
-                if int(window["new_segment"]) != int(query_segment):
+            absolute = local.to(device=device, dtype=torch.long) + int(start) * int(
+                self.spatial_tokens
+            )
+            if context_frames and int(key_segment) == prev_segment and str(region) in ("fg", "bg"):
+                absolute = upgrade_context_token_indices(
+                    absolute, context_frames, self.spatial_tokens
+                )
+            if str(region) in ("fg", "bg") and int(absolute.numel()) == 0:
+                # MultiTalk keeps one token so the flash call still runs.
+                # InfiniteTalk omits an empty key segment.
+                if self.backend == "multitalk":
+                    absolute = torch.tensor(
+                        [int(start) * int(self.spatial_tokens)],
+                        device=device,
+                        dtype=torch.long,
+                    )
+                else:
                     continue
-                prev_seg = int(query_segment) - 1
-                prev_start, prev_end = self.segment_bounds[prev_seg]
-                keep = spatial_token_indices(
-                    prev_start, prev_end, self.spatial_tokens, "fg", bg, device
-                )
-                # keep is local to the previous scene; convert to per-frame FG ids
-                fg_local = sorted({int(i) % self.spatial_tokens for i in keep.tolist()})
-                upgraded = token_union_upgrade(
-                    fg_local,
-                    range(prev_start, prev_end),
-                    window["context_frames"],
-                    self.spatial_tokens,
-                )
-                selected.append(torch.tensor(upgraded, dtype=torch.long, device=device))
+            selected.append(absolute)
         nonempty = [idx for idx in selected if idx.numel()]
         if not nonempty:
             return torch.empty(0, dtype=torch.long, device=device)

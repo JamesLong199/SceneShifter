@@ -1,6 +1,7 @@
 import pytest
+import torch
 
-from sceneshifter.masks import token_union_upgrade
+from sceneshifter.masks import upgrade_context_token_indices
 from sceneshifter.router import FramePromptRouter, resolve_transition_context_windows
 from tests.conftest import canonical_config
 
@@ -27,10 +28,11 @@ def test_multitalk_three_scene_windows():
 
 
 @pytest.mark.feature
-def test_token_union_golden():
-    assert token_union_upgrade([0, 2], range(0, 3), [2], 4) == [
-        0, 2, 4, 6, 8, 9, 10, 11
-    ]
+def test_context_upgrade_keeps_per_frame_tokens():
+    # Frames 0 and 1 keep their own FG tokens. Frame 2 is context and becomes full.
+    keep = torch.tensor([0, 5, 8])
+    upgraded = upgrade_context_token_indices(keep, [2], 4)
+    assert upgraded.tolist() == [0, 5, 8, 9, 10, 11]
 
 
 @pytest.mark.feature

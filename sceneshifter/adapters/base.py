@@ -359,27 +359,6 @@ def _call_official_flash(
     return orig(q, k, v, **call_kwargs)
 
 
-def _transition_query_indices(
-    router: FramePromptRouter, device: torch.device
-) -> Dict[int, torch.Tensor]:
-    by_segment: Dict[int, torch.Tensor] = {}
-    for window in router.get_transition_context_windows():
-        frames = [int(f) for f in window["query_frames"]]
-        if not frames:
-            continue
-        parts = [
-            torch.arange(
-                frame * router.spatial_tokens,
-                (frame + 1) * router.spatial_tokens,
-                device=device,
-                dtype=torch.long,
-            )
-            for frame in frames
-        ]
-        by_segment[int(window["new_segment"])] = torch.cat(parts)
-    return by_segment
-
-
 def _s2v_token_layout(router: FramePromptRouter, sequence_length: int) -> S2VTokenLayout:
     noisy = int(router.num_frames) * int(router.spatial_tokens)
     reference = int(router.spatial_tokens)
@@ -938,28 +917,53 @@ def scene_masked_official_flash(
             )
             _gather(q_idx, k_idx, segment, region)
     if router.should_apply_transition_context(timestep_idx):
-        trans_q = _transition_query_indices(router, q.device)
-        for segment, q_idx in trans_q.items():
-            trans_region = None if not isinstance(block["_mask"][segment], dict) else "fg"
-            k_idx = router.noisy_key_indices(
-                block,
-                segment,
-                trans_region,
-                q.device,
-                timestep_idx=timestep_idx,
-                include_transition=True,
-            )
-            if isinstance(block["_mask"][segment], dict):
-                k_bg = router.noisy_key_indices(
-                    block,
-                    segment,
-                    "bg",
-                    q.device,
-                    timestep_idx=timestep_idx,
-                    include_transition=True,
+        spatial = int(router.spatial_tokens)
+        for window in router.get_transition_context_windows():
+            segment = int(window["new_segment"])
+            if segment < 0 or segment >= len(block["_mask"]):
+                continue
+            split = isinstance(block["_mask"][segment], dict)
+            fg_q = bg_q = None
+            if split:
+                try:
+                    fg_q = _query_indices(router, segment, "fg", q.device)
+                    bg_q = _query_indices(router, segment, "bg", q.device)
+                except ValueError:
+                    fg_q = bg_q = None
+                if (
+                    fg_q is None
+                    or bg_q is None
+                    or int(fg_q.numel()) == 0
+                    or int(bg_q.numel()) == 0
+                ):
+                    split = False
+            for frame in window["query_frames"]:
+                frame = int(frame)
+                frame_idx = torch.arange(
+                    frame * spatial,
+                    (frame + 1) * spatial,
+                    device=q.device,
+                    dtype=torch.long,
                 )
-                k_idx = torch.unique(torch.cat([k_idx, k_bg]), sorted=True)
-            _gather(q_idx, k_idx, segment, trans_region)
+                if split:
+                    regions_here = (
+                        ("fg", frame_idx[torch.isin(frame_idx, fg_q)]),
+                        ("bg", frame_idx[torch.isin(frame_idx, bg_q)]),
+                    )
+                else:
+                    regions_here = ((None, frame_idx),)
+                for region, q_idx in regions_here:
+                    if int(q_idx.numel()) == 0:
+                        continue
+                    k_idx = router.noisy_key_indices(
+                        block,
+                        segment,
+                        region,
+                        q.device,
+                        timestep_idx=timestep_idx,
+                        include_transition=True,
+                    )
+                    _gather(q_idx, k_idx, segment, region)
     if extra > 0:
         if s2v_layout is not None:
             extra_idx = torch.arange(
