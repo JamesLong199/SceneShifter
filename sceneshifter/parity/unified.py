@@ -714,6 +714,27 @@ def _install_talking_official_decode_fixes(adapter: str) -> None:
     )
 
 
+def _install_multitalk_wav2vec_eager() -> None:
+    """Reference MultiTalk loads wav2vec with ``attn_implementation='eager'``."""
+    try:
+        from src.audio_analysis.wav2vec2 import Wav2Vec2Model
+    except Exception as exc:  # noqa: BLE001
+        print(f"[parity-unified] wav2vec eager patch skipped: {exc}", flush=True)
+        return
+    current = Wav2Vec2Model.from_pretrained
+    if getattr(current, "_ss_force_eager", False):
+        print("[parity-unified] multitalk wav2vec attn_implementation=eager", flush=True)
+        return
+
+    def from_pretrained(*args: Any, **kwargs: Any):
+        kwargs["attn_implementation"] = "eager"
+        return current(*args, **kwargs)
+
+    from_pretrained._ss_force_eager = True  # type: ignore[attr-defined]
+    Wav2Vec2Model.from_pretrained = from_pretrained  # type: ignore[method-assign]
+    print("[parity-unified] multitalk wav2vec attn_implementation=eager", flush=True)
+
+
 def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None:
     unified = cfg["unified"]
     input_json = _write_input_json(cfg, out_dir)
@@ -735,6 +756,7 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     else:
         import generate_multitalk as gm  # type: ignore
         adapter = "multitalk"
+        _install_multitalk_wav2vec_eager()
     _wrap_create_pipeline(gm, router, adapter, routing)
     try:
         import wan  # type: ignore

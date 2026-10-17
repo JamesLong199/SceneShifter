@@ -15,6 +15,7 @@ from .base import (
     wrap_cross_attention,
     wrap_self_attention,
 )
+from .talking_audio import install_reference_ref_map
 
 
 def _latent_frame_tokens(shape: Any) -> int:
@@ -86,6 +87,8 @@ class InfiniteTalkAdapter(Adapter):
 
     def inject(self, model: Any, router: Optional[FramePromptRouter]) -> List[Any]:
         self_mods, cross_mods = find_attention_modules(model)
+        for module in self_mods:
+            install_reference_ref_map(module, split_num=2)
         bound = [wrap_self_attention(m, router) for m in self_mods]
         bound.extend(wrap_cross_attention(m, router) for m in cross_mods)
         for module in find_audio_modules(model):
@@ -93,4 +96,5 @@ class InfiniteTalkAdapter(Adapter):
             bound.append(zero_first_latent_frame_audio(module))
         thread_timestep(model)
         print("[infinitetalk] zero audio residual on latent frame 0", flush=True)
+        print("[infinitetalk] ref map uses reference bf16 head-count reduction", flush=True)
         return bound
