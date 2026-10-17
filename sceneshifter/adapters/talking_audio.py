@@ -41,10 +41,14 @@ def install_reference_ref_map(module: Any, *, split_num: int) -> None:
     if not isinstance(globals_dict, dict):
         return
     current = globals_dict.get("get_attn_map_with_target")
-    if current is None or getattr(current, "_ss_reference_ref_map", False):
+    if current is None:
+        print(f"[talking-audio] ref-map patch skipped; no get_attn_map on {type(module).__name__}", flush=True)
+        return
+    if getattr(current, "_ss_reference_ref_map", False):
         return
     calculate = current.__globals__.get("calculate_x_ref_attn_map")
     if calculate is None:
+        print("[talking-audio] ref-map patch skipped; calculate_x_ref_attn_map missing", flush=True)
         return
     get_sp_group = current.__globals__.get("get_sp_group")
     default_split = int(split_num)
@@ -93,6 +97,7 @@ def install_reference_ref_map(module: Any, *, split_num: int) -> None:
     get_attn_map_with_target._ss_reference_ref_map = True  # type: ignore[attr-defined]
     get_attn_map_with_target._ss_reference_split_num = default_split  # type: ignore[attr-defined]
     globals_dict["get_attn_map_with_target"] = get_attn_map_with_target
+    print(f"[talking-audio] ref-map split_num={default_split} installed", flush=True)
 
 
 def multitalk_subject_centers(module: Any, human_num: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
