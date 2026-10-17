@@ -4,6 +4,8 @@ from sceneshifter.adapters.talking_audio import (
     accumulate_reference_ref_map,
     multitalk_audio_key_positions,
     multitalk_audio_query_positions,
+    multitalk_live_subject_assignments,
+    publish_scaled_query_to_audio_map,
     reference_audio_map_weight,
 )
 
@@ -94,3 +96,66 @@ def test_multitalk_audio_keys_chunk_by_speaker():
         dtype=torch.float32,
     )
     assert torch.equal(keys, torch.tensor([2.0, 2.0, 22.0, 22.0, 2.0, 2.0, 22.0, 22.0]))
+
+
+class _AssignRouter:
+    def __init__(self, timestep, mask_type="ref_attn"):
+        self.schedule = [
+            {"timestep_range": [3, 39], "params": {"mask_type": mask_type}}
+        ]
+        self._ss_timestep = timestep
+        self._ss_forward_serial = 7
+        self.live_subject_fg = None
+        self.refreshes = 0
+
+    def refresh_live_mask_from_stored(self, timestep, block):
+        self.refreshes += 1
+        self.live_subject_fg = torch.tensor(
+            [
+                [[1, 0, 1, 0]],
+                [[1, 0, 0, 0]],
+            ],
+            dtype=torch.float32,
+        )
+
+
+def test_live_subject_assignments_follow_the_ref_attn_mask():
+    router = _AssignRouter(3)
+    first = multitalk_live_subject_assignments(
+        router, human_num=2, n_t=1, spatial=4, device=torch.device("cpu")
+    )
+    second = multitalk_live_subject_assignments(
+        router, human_num=2, n_t=1, spatial=4, device=torch.device("cpu")
+    )
+    # Token 0 is foreground for both subjects, so argmax keeps subject 0.
+    # Token 2 is subject 0. The other tokens stay on the background index.
+    assert torch.equal(first, torch.tensor([0, 2, 0, 2]))
+    assert torch.equal(second, first)
+    assert router.refreshes == 1
+
+
+def test_live_subject_assignments_stay_off_before_the_schedule():
+    router = _AssignRouter(2)
+    assert (
+        multitalk_live_subject_assignments(
+            router, human_num=2, n_t=1, spatial=4, device=torch.device("cpu")
+        )
+        is None
+    )
+    assert router.refreshes == 0
+    scene0 = _AssignRouter(3, mask_type="scene0")
+    assert (
+        multitalk_live_subject_assignments(
+            scene0, human_num=2, n_t=1, spatial=4, device=torch.device("cpu")
+        )
+        is None
+    )
+
+
+def test_scaled_query_is_published_only_for_talking_heads():
+    original = torch.ones(2, 4)
+    scaled = original * 0.5
+    publish_scaled_query_to_audio_map(original, scaled, "wan_animate")
+    assert torch.equal(original, torch.ones(2, 4))
+    publish_scaled_query_to_audio_map(original, scaled, "multitalk")
+    assert torch.equal(original, scaled)

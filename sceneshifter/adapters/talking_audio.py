@@ -6,6 +6,10 @@ two head chunks (``split_num=2``). Both then rescale that mean in bf16 by the
 query length: ``calculate_x_ref_attn_map`` transposes ``[B, seq, heads, dim]``
 and, when no head mask is passed, uses ``shape[2]``. That is not the official
 ``(mean0 + mean1) / 2`` and not a rescale by the head count.
+
+Once the schedule is on, both references build that person map from the
+Q-scaled query. MultiTalk also replaces the map's argmax with the live
+per-subject mask when the active mask type is ``ref_attn``.
 """
 
 from __future__ import annotations
@@ -15,6 +19,98 @@ import types
 from typing import Any, Optional
 
 import torch
+
+
+def publish_scaled_query_to_audio_map(
+    original: torch.Tensor,
+    scaled: torch.Tensor,
+    backend: Optional[str],
+) -> None:
+    """Leave the scaled query in the tensor official self-attn maps after flash.
+
+    The schedule scales a clone for attention. Reference ``get_attn_map_with_target``
+    then reads that same scaled query. Official code reads the unscaled local
+    ``q`` after the kernel returns, so copy the scaled values back for the
+    talking-head backends. Other backends keep the unscaled storage their
+    ref-loc collectors alias.
+    """
+    if backend not in {"multitalk", "infinitetalk"}:
+        return
+    if not torch.is_tensor(original) or not torch.is_tensor(scaled):
+        return
+    if scaled.data_ptr() == original.data_ptr() or tuple(scaled.shape) != tuple(original.shape):
+        return
+    original.copy_(scaled.to(dtype=original.dtype))
+
+
+def _ref_attn_schedule_block(router: Any, timestep: int) -> Optional[dict]:
+    match = None
+    for block in getattr(router, "schedule", None) or []:
+        if not isinstance(block, dict):
+            continue
+        span = block.get("timestep_range")
+        if not isinstance(span, (list, tuple)) or len(span) < 2:
+            continue
+        if not (int(span[0]) <= int(timestep) <= int(span[1])):
+            continue
+        params = block.get("params") or {}
+        if str(params.get("mask_type", "")) == "ref_attn":
+            match = block
+    return match
+
+
+def multitalk_live_subject_assignments(
+    router: Any,
+    *,
+    human_num: int,
+    n_t: int,
+    spatial: int,
+    device: torch.device,
+) -> Optional[torch.Tensor]:
+    """Reference assignments from the live per-subject ref-attn mask.
+
+    Foreground tokens take ``argmax`` over subjects. Every other token stays
+    at ``human_num``, the background center. Steps outside a ``ref_attn``
+    schedule keep the person-map argmax by returning ``None``.
+    """
+    if router is None or int(human_num) <= 1:
+        return None
+    timestep = getattr(router, "_ss_timestep", None)
+    if timestep is None:
+        return None
+    block = _ref_attn_schedule_block(router, int(timestep))
+    if block is None:
+        return None
+    serial = getattr(router, "_ss_forward_serial", None)
+    if serial is not None:
+        key = (int(timestep), int(serial))
+        cached = getattr(router, "_ss_audio_assign_cache", None)
+        if isinstance(cached, tuple) and cached[0] == key:
+            return cached[1]
+    refresh = getattr(router, "refresh_live_mask_from_stored", None)
+    if callable(refresh):
+        refresh(int(timestep), block)
+    fg = getattr(router, "live_subject_fg", None)
+    result: Optional[torch.Tensor] = None
+    if (
+        torch.is_tensor(fg)
+        and fg.ndim == 3
+        and int(fg.shape[0]) >= int(human_num)
+        and int(fg.shape[1]) == int(n_t)
+        and int(fg.shape[2]) == int(spatial)
+    ):
+        # Reference stores per-subject background and uses ``1 - (bg > 0.5)``.
+        # ``live_subject_fg`` is already that foreground mask.
+        flat = (fg[: int(human_num)] > 0.5).to(dtype=torch.float32).reshape(int(human_num), -1)
+        result = torch.full((int(flat.shape[1]),), int(human_num), dtype=torch.long)
+        any_fg = flat > 0.5
+        covered = any_fg.any(dim=0)
+        if bool(covered.any()):
+            result[covered] = torch.argmax(flat[:, covered], dim=0).to(dtype=torch.long)
+        result = result.to(device=device)
+    if serial is not None:
+        router._ss_audio_assign_cache = ((int(timestep), int(serial)), result)
+    return result
 
 
 def reference_audio_map_weight(visual_q_chunk: torch.Tensor) -> int:
@@ -208,6 +304,14 @@ def align_multitalk_audio_rope(module: torch.nn.Module) -> torch.nn.Module:
         if self.qk_norm:
             query = self.q_norm(query)
 
+        if subject_token_assignments is None:
+            subject_token_assignments = multitalk_live_subject_assignments(
+                getattr(self, "frame_prompt_router", None),
+                human_num=int(human_num),
+                n_t=int(n_t),
+                spatial=int(spatial),
+                device=query.device,
+            )
         positions = multitalk_audio_query_positions(
             self,
             n_t=int(n_t),

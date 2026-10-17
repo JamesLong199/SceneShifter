@@ -751,6 +751,41 @@ def test_infinitetalk_ref_loc_scores_in_fp32_when_v_is_bf16(monkeypatch):
     assert fg is not None and bg is not None
 
 
+@pytest.mark.parametrize("backend", ["multitalk", "infinitetalk"])
+def test_talking_head_person_map_q_is_the_scaled_query(monkeypatch, backend):
+    cfg = canonical_config()
+    router = FramePromptRouter(cfg, backend=backend, patch_height=2, patch_width=2)
+    router.apply_q_scale = lambda q, block: q * 2
+    collected = {}
+
+    def collect(router, module, q, k, timestep_idx, block_idx, pass_type):
+        collected["q"] = q
+        collected["ptr"] = q.data_ptr()
+
+    monkeypatch.setattr(base_adapter, "_collect_live_ref_attn", collect)
+
+    def flash(q, k, v, *args, **kwargs):
+        return torch.zeros_like(q)
+
+    q = torch.ones(1, 32, 1, 2)
+    module = _Attn()
+    module.frame_prompt_router = router
+    module._ss_timestep = 3
+    module._ss_block_idx = 0
+    module._ss_pass = "cond"
+    scene_masked_official_flash(
+        flash,
+        "flash_attention",
+        module,
+        router,
+        (q, q.clone(), q.clone()),
+        {"k_lens": torch.tensor([32])},
+    )
+    assert torch.equal(q, torch.full_like(q, 2.0))
+    assert torch.equal(collected["q"], torch.full_like(q, 2.0))
+    assert collected["ptr"] != q.data_ptr()
+
+
 def test_fantasy_collects_unscaled_q_but_attention_uses_scaled_q(monkeypatch):
     cfg = canonical_config()
     router = FramePromptRouter(

@@ -800,6 +800,11 @@ def scene_masked_official_flash(
         in {"fantasytalking", "wan_s2v", "wan_animate"}
         else q
     )
+    # Official get_attn_map_with_target reads this q after flash returns.
+    # Reference builds the audio person map from the scaled query.
+    from .talking_audio import publish_scaled_query_to_audio_map
+
+    publish_scaled_query_to_audio_map(unscaled_q, q, getattr(router, "backend", None))
     trace_tensor(
         "self_q_scaled",
         q,
@@ -1441,7 +1446,7 @@ def thread_timestep(model: Any) -> None:
         return
     original = model.forward
     unseen = object()
-    state = {"t_idx": 0, "last_t": unseen, "pass": 0}
+    state = {"t_idx": 0, "last_t": unseen, "pass": 0, "serial": 0}
 
     def _t_key(args, kwargs):
         t = kwargs.get("t", kwargs.get("timestep", kwargs.get("timesteps")))
@@ -1457,6 +1462,7 @@ def thread_timestep(model: Any) -> None:
             return None
 
     def forward(self, *args, **kwargs):
+        state["serial"] = int(state["serial"]) + 1
         timestep_idx = kwargs.get("timestep_idx", kwargs.get("t_idx"))
         pass_type = kwargs.get("pass_type")
         t_key = _t_key(args, kwargs)
@@ -1506,6 +1512,7 @@ def thread_timestep(model: Any) -> None:
                 router.live_subject_fg = None
             router._ss_timestep = timestep_idx
             router._ss_pass = pass_type
+            router._ss_forward_serial = int(state["serial"])
             start = int(getattr(router, "audio_start_timestep", 0) or 0)
             if int(timestep_idx) < start:
                 kwargs = dict(kwargs)
