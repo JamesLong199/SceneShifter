@@ -4,6 +4,7 @@ import contextlib
 import types
 from typing import Any, List, Optional
 
+import numpy as np
 import torch
 
 from ..router import FramePromptRouter
@@ -35,6 +36,57 @@ def _feature_fp32_context(args):
     return contextlib.nullcontext()
 
 
+def _closed_over_function(value: Any, name: str) -> Optional[Any]:
+    function = getattr(value, "__func__", value)
+    closure = getattr(function, "__closure__", None)
+    freevars = getattr(getattr(function, "__code__", None), "co_freevars", ())
+    if not closure or name not in freevars:
+        return None
+    return closure[freevars.index(name)].cell_contents
+
+
+def install_fun_camera_batched_cfg(model: Any) -> None:
+    """Replace locked official serial CFG with the feature batch-2 contract."""
+    if getattr(model, "_ss_fun_batched_cfg_installed", False):
+        return
+    decorated = getattr(model, "forward", None)
+    feature_forward = _closed_over_function(decorated, "func")
+    if not callable(feature_forward):
+        # Tiny test models and future official models may already be batched.
+        return
+
+    def batched_cfg_forward(self, x, *args, **kwargs):
+        batch = len(x)
+        skip_cfg = (
+            batch >= 2
+            and self.cfg_skip_ratio is not None
+            and self.current_steps
+            >= self.num_inference_steps * (1 - self.cfg_skip_ratio)
+        )
+        if skip_cfg:
+            half = int(batch // 2)
+            x = x[half:]
+            args = tuple(
+                value[half:]
+                if isinstance(value, (torch.Tensor, list, tuple, np.ndarray))
+                else value
+                for value in args
+            )
+            kwargs = {
+                key: (
+                    value[half:]
+                    if isinstance(value, (torch.Tensor, list, tuple, np.ndarray))
+                    else value
+                )
+                for key, value in kwargs.items()
+            }
+        result = feature_forward(self, x, *args, **kwargs)
+        return torch.cat([result, result], dim=0) if skip_cfg else result
+
+    model.forward = types.MethodType(batched_cfg_forward, model)
+    model._ss_fun_batched_cfg_installed = True
+
+
 def install_fun_camera_fp32_time_embedding(model: Any) -> None:
     """Match feature Fun's FP32 time-embedding/projection block in memory.
 
@@ -53,54 +105,20 @@ def install_fun_camera_fp32_time_embedding(model: Any) -> None:
 
     original_embedding = time_embedding.forward
     original_projection = time_projection.forward
-    original_model_forward = getattr(model, "forward", None)
-
-    def feature_cfg_batch(args):
-        value = next((item for item in args if torch.is_tensor(item)), None)
-        outer_batch = int(getattr(model, "_ss_fun_outer_cfg_batch", 0) or 0)
-        if (
-            value is not None
-            and value.ndim > 0
-            and int(value.shape[0]) == 1
-            and outer_batch > 1
-        ):
-            return value.expand(outer_batch, *value.shape[1:]).contiguous(), 1
-        return value, None
 
     def embedding_forward(self, *args, **kwargs):
-        value, trim = feature_cfg_batch(args)
-        call_args = (value, *args[1:]) if value is not None else args
-        with _feature_fp32_context(call_args):
-            result = original_embedding(*call_args, **kwargs)
+        with _feature_fp32_context(args):
+            result = original_embedding(*args, **kwargs)
         if not torch.is_tensor(result):
             raise TypeError("Wan Fun Camera time embedding did not return a tensor")
-        if trim is not None:
-            result = result[:trim]
         return _KeepFeatureTimeDtype(result)
 
     def projection_forward(self, *args, **kwargs):
-        value, trim = feature_cfg_batch(args)
-        call_args = (value, *args[1:]) if value is not None else args
-        with _feature_fp32_context(call_args):
-            result = original_projection(*call_args, **kwargs)
-        return result[:trim] if trim is not None else result
-
-    def model_forward(self, *args, **kwargs):
-        value = kwargs.get("x")
-        if value is None and args:
-            value = args[0]
-        model._ss_fun_outer_cfg_batch = (
-            int(value.shape[0]) if torch.is_tensor(value) and value.ndim > 0 else 0
-        )
-        try:
-            return original_model_forward(*args, **kwargs)
-        finally:
-            model._ss_fun_outer_cfg_batch = 0
+        with _feature_fp32_context(args):
+            return original_projection(*args, **kwargs)
 
     time_embedding.forward = types.MethodType(embedding_forward, time_embedding)
     time_projection.forward = types.MethodType(projection_forward, time_projection)
-    if callable(original_model_forward):
-        model.forward = types.MethodType(model_forward, model)
     model._ss_fun_fp32_time_installed = True
 
 
@@ -109,6 +127,7 @@ class WanFunCameraAdapter(Adapter):
 
     def inject(self, model: Any, router: Optional[FramePromptRouter]) -> List[Any]:
         # Camera residual (y_camera / SimpleAdapter) stays on the official path.
+        install_fun_camera_batched_cfg(model)
         install_fun_camera_fp32_time_embedding(model)
         self_mods, cross_mods = find_attention_modules(model)
         bound = [wrap_self_attention(m, router) for m in self_mods]

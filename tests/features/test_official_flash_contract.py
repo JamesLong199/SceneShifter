@@ -13,7 +13,10 @@ from sceneshifter.adapters.base import (
     wrap_audio_attention,
     wrap_cross_attention,
 )
-from sceneshifter.adapters.wan_fun_camera import install_fun_camera_fp32_time_embedding
+from sceneshifter.adapters.wan_fun_camera import (
+    install_fun_camera_batched_cfg,
+    install_fun_camera_fp32_time_embedding,
+)
 from sceneshifter.masks import downsample_subject_fg
 from sceneshifter.router import FramePromptRouter
 from tests.conftest import canonical_config
@@ -43,11 +46,8 @@ def test_fun_camera_preserves_feature_fp32_time_modulation():
             self.time_projection = TimeProjection()
 
         def forward(self, value):
-            rows = []
-            for row in value:
-                e = self.time_embedding(row[None]).to(torch.bfloat16)
-                rows.append(self.time_projection(e))
-            return torch.cat(rows)
+            e = self.time_embedding(value).to(torch.bfloat16)
+            return self.time_projection(e)
 
     value = torch.tensor([[1.0, 2.0], [1.0, 2.0]], dtype=torch.float32)
     old_e = TimeEmbedding()(value[:1]).to(torch.bfloat16)
@@ -62,6 +62,52 @@ def test_fun_camera_preserves_feature_fp32_time_modulation():
     assert model.time_projection.seen_dtype == torch.float32
     assert e0.dtype == torch.float32
     torch.testing.assert_close(e0, expected_e0, rtol=0, atol=0)
+
+
+def test_fun_camera_replaces_serial_cfg_with_feature_batch_order():
+    serial_batches = []
+    batched_batches = []
+
+    def official_serial_cfg(func):
+        def wrapper(self, x, context):
+            half = len(x) // 2
+            cond = func(self, x[half:], context[half:])
+            uncond = func(self, x[:half], context[:half])
+            return torch.cat([uncond, cond])
+
+        return wrapper
+
+    class SerialModel:
+        cfg_skip_ratio = 0
+        current_steps = 0
+        num_inference_steps = 50
+
+        @official_serial_cfg
+        def forward(self, x, context):
+            serial_batches.append(len(x))
+            return context
+
+    x = torch.tensor([[1.0], [2.0]])
+    context = torch.tensor([[-1.0], [1.0]])
+    serial = SerialModel()
+    torch.testing.assert_close(serial.forward(x, context), context)
+    assert serial_batches == [1, 1]
+
+    class BatchedModel:
+        cfg_skip_ratio = 0
+        current_steps = 0
+        num_inference_steps = 50
+
+        @official_serial_cfg
+        def forward(self, x, context):
+            batched_batches.append(len(x))
+            return context
+
+    batched = BatchedModel()
+    install_fun_camera_batched_cfg(batched)
+    install_fun_camera_batched_cfg(batched)  # idempotent
+    torch.testing.assert_close(batched.forward(x, context), context)
+    assert batched_batches == [2]
 
 
 def test_fun_camera_serial_pass_resets_each_timestep():
