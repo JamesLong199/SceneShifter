@@ -6,6 +6,7 @@ from typing import Any, List, Optional
 
 import numpy as np
 import torch
+import torch.nn as nn
 
 from ..router import FramePromptRouter
 from .base import Adapter, find_attention_modules, thread_timestep, wrap_cross_attention, wrap_self_attention
@@ -122,6 +123,38 @@ def install_fun_camera_fp32_time_embedding(model: Any) -> None:
     model._ss_fun_fp32_time_installed = True
 
 
+def _feature_wan_layernorm_forward(self, x):
+    """Return native LayerNorm output, matching feature Fun.
+
+    CUDA autocast keeps that output in FP32. Locked official Fun then applies
+    ``.type_as(x)``, which casts it back to the activation dtype.
+    """
+    return nn.LayerNorm.forward(self, x)
+
+
+def install_fun_camera_fp32_layernorm(model: Any) -> None:
+    """Stop Fun Camera WanLayerNorm from casting autocast FP32 back to BF16.
+
+    Only instances on this model are replaced, so other backbones keep the
+    locked official ``.type_as(x)`` LayerNorm.
+    """
+    if getattr(model, "_ss_fun_fp32_layernorm_installed", False):
+        return
+    modules = getattr(model, "modules", None)
+    patched = []
+    if callable(modules):
+        for module in modules():
+            if type(module).__name__ != "WanLayerNorm":
+                continue
+            module.forward = types.MethodType(_feature_wan_layernorm_forward, module)
+            patched.append(module)
+    if not patched:
+        if hasattr(model, "blocks"):
+            raise TypeError("Wan Fun Camera model has no WanLayerNorm modules")
+        return
+    model._ss_fun_fp32_layernorm_installed = True
+
+
 class WanFunCameraAdapter(Adapter):
     name = "wan_fun_camera"
 
@@ -129,6 +162,7 @@ class WanFunCameraAdapter(Adapter):
         # Camera residual (y_camera / SimpleAdapter) stays on the official path.
         install_fun_camera_batched_cfg(model)
         install_fun_camera_fp32_time_embedding(model)
+        install_fun_camera_fp32_layernorm(model)
         self_mods, cross_mods = find_attention_modules(model)
         bound = [wrap_self_attention(m, router) for m in self_mods]
         bound.extend(wrap_cross_attention(m, router) for m in cross_mods)
