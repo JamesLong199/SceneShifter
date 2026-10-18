@@ -827,24 +827,53 @@ def scene_masked_official_flash(
         k_idx: torch.Tensor,
         segment: int,
         region: Optional[str] = None,
+        *,
+        preserve_s2v_key_order: bool = True,
     ) -> None:
         k_idx = k_idx[(k_idx >= 0) & (k_idx < k.shape[1])]
         if s2v_layout is not None:
             row = router.attention_row(block, int(segment), region)
-            allow_ref, ref_region = row[0]
-            if allow_ref:
-                ref_idx = _s2v_reference_indices(
-                    router, s2v_layout, ref_region, k_idx.device
-                )
-                k_idx = torch.cat([k_idx, ref_idx])
             framepack_idx = torch.arange(
                 int(s2v_layout.framepack_slice.start),
                 int(s2v_layout.framepack_slice.stop),
                 device=k_idx.device,
             )
-            if framepack_idx.numel():
-                k_idx = torch.cat([k_idx, framepack_idx])
-            k_idx = torch.unique(k_idx, sorted=True)
+            if preserve_s2v_key_order:
+                ordered = []
+                for key_segment, (active, key_region) in enumerate(row):
+                    if not active:
+                        continue
+                    start, _ = router.segment_bounds[key_segment]
+                    local = router.spatial_indices(
+                        key_segment, key_region, k_idx.device
+                    )
+                    ordered.append(
+                        local.to(dtype=torch.long)
+                        + int(start) * int(router.spatial_tokens)
+                    )
+                    if key_segment == 0:
+                        ordered.append(
+                            _s2v_reference_indices(
+                                router, s2v_layout, key_region, k_idx.device
+                            )
+                        )
+                ordered.append(framepack_idx)
+                nonempty = [indices for indices in ordered if indices.numel()]
+                k_idx = (
+                    torch.cat(nonempty)
+                    if nonempty
+                    else torch.empty(0, dtype=torch.long, device=k_idx.device)
+                )
+            else:
+                allow_ref, ref_region = row[0]
+                if allow_ref:
+                    ref_idx = _s2v_reference_indices(
+                        router, s2v_layout, ref_region, k_idx.device
+                    )
+                    k_idx = torch.cat([k_idx, ref_idx])
+                if framepack_idx.numel():
+                    k_idx = torch.cat([k_idx, framepack_idx])
+                k_idx = torch.unique(k_idx, sorted=True)
         else:
             if extra_key_fn is not None:
                 extra_k = extra_key_fn(router, k, segment)
@@ -968,7 +997,13 @@ def scene_masked_official_flash(
                         timestep_idx=timestep_idx,
                         include_transition=True,
                     )
-                    _gather(q_idx, k_idx, segment, region)
+                    _gather(
+                        q_idx,
+                        k_idx,
+                        segment,
+                        region,
+                        preserve_s2v_key_order=False,
+                    )
     if extra > 0:
         if s2v_layout is not None:
             extra_idx = torch.arange(

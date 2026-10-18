@@ -202,7 +202,7 @@ def test_s2v_scene_mask_preserves_reference_and_framepack_contract(bg_mask_path)
     assert scene0["q"] == [*range(12), *range(32, 36)]
     assert scene0["k"] == [*range(12), *range(32, 39)]
     assert scene1["q"] == list(range(12, 32))
-    assert scene1["k"] == [0, 4, 8, *range(12, 32), 32, 36, 37, 38]
+    assert scene1["k"] == [0, 4, 8, 32, *range(12, 32), 36, 37, 38]
     assert framepack["q"] == [36, 37, 38]
     assert framepack["k"] == list(range(39))
     assert torch.equal(framepack["k_lens"], torch.tensor([39]))
