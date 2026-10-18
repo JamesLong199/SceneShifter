@@ -193,8 +193,16 @@ class FramePromptRouter:
         if raw is None:
             return
         center_crop = self.backend == "wan_s2v"
-        cover_original = bool(self.config.get("input_mask_cover_original", False))
-        cover_head_only = bool(self.config.get("input_mask_cover_head_only", False))
+        s2v_defaults = self.backend == "wan_s2v"
+        cover_original = bool(
+            self.config.get("input_mask_cover_original", s2v_defaults)
+        )
+        cover_head_only = bool(
+            self.config.get(
+                "input_mask_cover_head_only",
+                s2v_defaults and self.raw_head_fg is not None,
+            )
+        )
         if cover_head_only and not cover_original:
             cover_head_only = False
         if cover_head_only:

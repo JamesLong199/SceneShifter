@@ -48,6 +48,30 @@ def test_cover_original_keeps_sparse_foreground():
 
 
 @pytest.mark.feature
+def test_s2v_defaults_to_cover_original_without_changing_other_backends(tmp_path):
+    foreground = torch.zeros(8, 8)
+    foreground[1, 1] = 1
+    path = tmp_path / "sparse.npy"
+    np.save(path, (~foreground.bool()).float().numpy())
+    cfg = canonical_config(background_mask_path={"0": str(path)})
+
+    s2v = FramePromptRouter(
+        cfg, backend="wan_s2v", patch_height=2, patch_width=2
+    )
+    multitalk = FramePromptRouter(
+        cfg, backend="multitalk", patch_height=2, patch_width=2
+    )
+    assert s2v.subject_fg_masks.any()
+    assert not multitalk.subject_fg_masks.any()
+
+    cfg["input_mask_cover_original"] = False
+    s2v_override = FramePromptRouter(
+        cfg, backend="wan_s2v", patch_height=2, patch_width=2
+    )
+    assert not s2v_override.subject_fg_masks.any()
+
+
+@pytest.mark.feature
 def test_cover_head_only_unions_nearest_human_and_cover_head(tmp_path):
     from sceneshifter.masks import downsample_subject_fg, downsample_subject_fg_head_union
 
