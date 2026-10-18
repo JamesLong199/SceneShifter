@@ -77,6 +77,12 @@ def test_fun_camera_replaces_serial_cfg_with_feature_batch_order():
 
         return wrapper
 
+    def diagnostic_wrapper(original_forward):
+        def traced(self, *args, **kwargs):
+            return original_forward(self, *args, **kwargs)
+
+        return traced
+
     class SerialModel:
         cfg_skip_ratio = 0
         current_steps = 0
@@ -98,6 +104,7 @@ def test_fun_camera_replaces_serial_cfg_with_feature_batch_order():
         current_steps = 0
         num_inference_steps = 50
 
+        @diagnostic_wrapper
         @official_serial_cfg
         def forward(self, x, context):
             batched_batches.append(len(x))
