@@ -155,6 +155,40 @@ def install_fun_camera_fp32_layernorm(model: Any) -> None:
     model._ss_fun_fp32_layernorm_installed = True
 
 
+def _feature_wan_rmsnorm_forward(self, x):
+    """Match feature Fun RMSNorm under autocast.
+
+    Feature computes the norm in the incoming dtype and casts only the rsqrt
+    factor with ``.to(x.dtype)``. Locked official Fun normalizes ``x.float()``
+    and then ``.type_as(x)``, which changes Q/K after a matching linear.
+    """
+    scale = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps).to(x.dtype)
+    return x * scale * self.weight
+
+
+def install_fun_camera_feature_rmsnorm(model: Any) -> None:
+    """Replace Fun Camera WanRMSNorm with the feature autocast formula.
+
+    Only instances on this model are replaced, so other backbones keep the
+    locked official ``x.float()`` then ``.type_as(x)`` RMSNorm.
+    """
+    if getattr(model, "_ss_fun_feature_rmsnorm_installed", False):
+        return
+    modules = getattr(model, "modules", None)
+    patched = []
+    if callable(modules):
+        for module in modules():
+            if type(module).__name__ != "WanRMSNorm":
+                continue
+            module.forward = types.MethodType(_feature_wan_rmsnorm_forward, module)
+            patched.append(module)
+    if not patched:
+        if hasattr(model, "blocks"):
+            raise TypeError("Wan Fun Camera model has no WanRMSNorm modules")
+        return
+    model._ss_fun_feature_rmsnorm_installed = True
+
+
 class WanFunCameraAdapter(Adapter):
     name = "wan_fun_camera"
 
@@ -163,6 +197,7 @@ class WanFunCameraAdapter(Adapter):
         install_fun_camera_batched_cfg(model)
         install_fun_camera_fp32_time_embedding(model)
         install_fun_camera_fp32_layernorm(model)
+        install_fun_camera_feature_rmsnorm(model)
         self_mods, cross_mods = find_attention_modules(model)
         bound = [wrap_self_attention(m, router) for m in self_mods]
         bound.extend(wrap_cross_attention(m, router) for m in cross_mods)

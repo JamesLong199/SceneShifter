@@ -15,6 +15,7 @@ from sceneshifter.adapters.base import (
 )
 from sceneshifter.adapters.wan_fun_camera import (
     install_fun_camera_batched_cfg,
+    install_fun_camera_feature_rmsnorm,
     install_fun_camera_fp32_layernorm,
     install_fun_camera_fp32_time_embedding,
 )
@@ -176,6 +177,143 @@ def test_fun_camera_layernorm_stays_fp32_under_cuda_autocast():
     assert out.dtype == torch.float32
     assert official.dtype == torch.bfloat16
     torch.testing.assert_close(out, native, rtol=0, atol=0)
+
+
+def _feature_rmsnorm(module, x):
+    scale = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + module.eps).to(dtype=x.dtype)
+    return x * scale * module.weight
+
+
+def _official_rmsnorm(module, x):
+    y = x.float()
+    y = y * torch.rsqrt(y.pow(2).mean(dim=-1, keepdim=True) + module.eps)
+    return y.to(dtype=x.dtype) * module.weight
+
+
+def test_fun_camera_rmsnorm_keeps_feature_formula_and_leaves_other_backends(monkeypatch):
+    class WanRMSNorm(nn.Module):
+        def __init__(self, dim, eps=1e-6):
+            super().__init__()
+            self.eps = eps
+            self.weight = nn.Parameter(torch.randn(dim, dtype=torch.bfloat16))
+
+        def forward(self, x):
+            y = x.float()
+            y = y * torch.rsqrt(y.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+            return y.type_as(x) * self.weight
+
+    class WanLayerNorm(nn.LayerNorm):
+        def forward(self, x):
+            return nn.LayerNorm.forward(self, x.float()).type_as(x)
+
+    class Fun(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm_q = WanRMSNorm(4)
+            self.norm_k = WanRMSNorm(4)
+            self.norm1 = WanLayerNorm(4, elementwise_affine=False)
+            self.blocks = nn.ModuleList([self.norm_q, self.norm_k])
+
+    class Other(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm_q = WanRMSNorm(4)
+            self.blocks = nn.ModuleList([self.norm_q])
+
+    torch.manual_seed(0)
+    fun = Fun()
+    other = Other()
+    other.norm_q.load_state_dict(fun.norm_q.state_dict())
+    x = torch.randn(2, 5, 4, dtype=torch.bfloat16)
+    casts = []
+    real_type_as = torch.Tensor.type_as
+
+    def spy(self, other_tensor):
+        casts.append((self.dtype, other_tensor.dtype))
+        return real_type_as(self, other_tensor)
+
+    monkeypatch.setattr(torch.Tensor, "type_as", spy)
+    install_fun_camera_feature_rmsnorm(fun)
+    install_fun_camera_feature_rmsnorm(fun)  # idempotent
+
+    feature_q = _feature_rmsnorm(fun.norm_q, x)
+    official_q = _official_rmsnorm(fun.norm_q, x)
+    assert not torch.equal(feature_q, official_q)
+
+    casts.clear()
+    norm_q = fun.norm_q(x)
+    assert casts == []
+    assert fun.norm_q.forward.__func__.__name__ == "_feature_wan_rmsnorm_forward"
+    assert norm_q.dtype == feature_q.dtype
+    torch.testing.assert_close(norm_q, feature_q, rtol=0, atol=0)
+    assert not torch.equal(norm_q, official_q)
+
+    casts.clear()
+    norm_k = fun.norm_k(x)
+    assert casts == []
+    torch.testing.assert_close(norm_k, _feature_rmsnorm(fun.norm_k, x), rtol=0, atol=0)
+
+    casts.clear()
+    layernorm = fun.norm1(x)
+    assert layernorm.dtype == torch.bfloat16
+    assert casts == [(torch.float32, torch.bfloat16)]
+    assert fun.norm1.forward.__func__ is WanLayerNorm.forward
+
+    casts.clear()
+    other_out = other.norm_q(x)
+    assert other.norm_q.forward.__func__ is WanRMSNorm.forward
+    assert other_out.dtype == torch.bfloat16
+    assert casts
+    torch.testing.assert_close(other_out, _official_rmsnorm(other.norm_q, x), rtol=0, atol=0)
+
+
+def test_fun_camera_rmsnorm_requires_modules_on_a_real_transformer():
+    class Model:
+        blocks = []
+
+    with pytest.raises(TypeError, match="WanRMSNorm"):
+        install_fun_camera_feature_rmsnorm(Model())
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_fun_camera_rmsnorm_matches_feature_under_cuda_autocast():
+    class WanRMSNorm(nn.Module):
+        def __init__(self, dim, eps=1e-6):
+            super().__init__()
+            self.eps = eps
+            self.weight = nn.Parameter(torch.randn(dim, dtype=torch.bfloat16))
+
+        def forward(self, x):
+            y = x.float()
+            y = y * torch.rsqrt(y.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+            return y.type_as(x) * self.weight
+
+    class Fun(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm_q = WanRMSNorm(8)
+            self.blocks = nn.ModuleList([self.norm_q])
+
+    class Other(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm_q = WanRMSNorm(8)
+
+    torch.manual_seed(0)
+    fun = Fun().cuda()
+    other = Other().cuda()
+    other.norm_q.load_state_dict(fun.norm_q.state_dict())
+    x = torch.randn(2, 4, 8, device="cuda", dtype=torch.bfloat16)
+    install_fun_camera_feature_rmsnorm(fun)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        out = fun.norm_q(x)
+        feature = _feature_rmsnorm(fun.norm_q, x)
+        official = other.norm_q(x)
+    assert out.dtype == torch.bfloat16
+    assert feature.dtype == torch.bfloat16
+    assert official.dtype == torch.bfloat16
+    torch.testing.assert_close(out, feature, rtol=0, atol=0)
+    assert not torch.equal(out, official)
 
 
 def test_fun_camera_replaces_serial_cfg_with_feature_batch_order():
