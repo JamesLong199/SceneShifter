@@ -53,20 +53,54 @@ def install_fun_camera_fp32_time_embedding(model: Any) -> None:
 
     original_embedding = time_embedding.forward
     original_projection = time_projection.forward
+    original_model_forward = getattr(model, "forward", None)
+
+    def feature_cfg_batch(args):
+        value = next((item for item in args if torch.is_tensor(item)), None)
+        outer_batch = int(getattr(model, "_ss_fun_outer_cfg_batch", 0) or 0)
+        if (
+            value is not None
+            and value.ndim > 0
+            and int(value.shape[0]) == 1
+            and outer_batch > 1
+        ):
+            return value.expand(outer_batch, *value.shape[1:]).contiguous(), 1
+        return value, None
 
     def embedding_forward(self, *args, **kwargs):
-        with _feature_fp32_context(args):
-            result = original_embedding(*args, **kwargs)
+        value, trim = feature_cfg_batch(args)
+        call_args = (value, *args[1:]) if value is not None else args
+        with _feature_fp32_context(call_args):
+            result = original_embedding(*call_args, **kwargs)
         if not torch.is_tensor(result):
             raise TypeError("Wan Fun Camera time embedding did not return a tensor")
+        if trim is not None:
+            result = result[:trim]
         return _KeepFeatureTimeDtype(result)
 
     def projection_forward(self, *args, **kwargs):
-        with _feature_fp32_context(args):
-            return original_projection(*args, **kwargs)
+        value, trim = feature_cfg_batch(args)
+        call_args = (value, *args[1:]) if value is not None else args
+        with _feature_fp32_context(call_args):
+            result = original_projection(*call_args, **kwargs)
+        return result[:trim] if trim is not None else result
+
+    def model_forward(self, *args, **kwargs):
+        value = kwargs.get("x")
+        if value is None and args:
+            value = args[0]
+        model._ss_fun_outer_cfg_batch = (
+            int(value.shape[0]) if torch.is_tensor(value) and value.ndim > 0 else 0
+        )
+        try:
+            return original_model_forward(*args, **kwargs)
+        finally:
+            model._ss_fun_outer_cfg_batch = 0
 
     time_embedding.forward = types.MethodType(embedding_forward, time_embedding)
     time_projection.forward = types.MethodType(projection_forward, time_projection)
+    if callable(original_model_forward):
+        model.forward = types.MethodType(model_forward, model)
     model._ss_fun_fp32_time_installed = True
 
 

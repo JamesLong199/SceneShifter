@@ -26,7 +26,7 @@ class _Attn(nn.Module):
 def test_fun_camera_preserves_feature_fp32_time_modulation():
     class TimeEmbedding(nn.Module):
         def forward(self, value):
-            return value * 1.25 + 0.125
+            return value * 1.25 + 0.125 + value.shape[0] * 1e-4
 
     class TimeProjection(nn.Module):
         def __init__(self):
@@ -35,27 +35,33 @@ def test_fun_camera_preserves_feature_fp32_time_modulation():
 
         def forward(self, value):
             self.seen_dtype = value.dtype
-            return value * 2.0
+            return value * 2.0 + value.shape[0] * 1e-4
 
     class Model:
         def __init__(self):
             self.time_embedding = TimeEmbedding()
             self.time_projection = TimeProjection()
 
-    value = torch.tensor([[1.0, 2.0]], dtype=torch.float32)
-    old_e = TimeEmbedding()(value).to(torch.bfloat16)
+        def forward(self, value):
+            rows = []
+            for row in value:
+                e = self.time_embedding(row[None]).to(torch.bfloat16)
+                rows.append(self.time_projection(e))
+            return torch.cat(rows)
+
+    value = torch.tensor([[1.0, 2.0], [1.0, 2.0]], dtype=torch.float32)
+    old_e = TimeEmbedding()(value[:1]).to(torch.bfloat16)
     assert old_e.dtype == torch.bfloat16
 
     model = Model()
     install_fun_camera_fp32_time_embedding(model)
     install_fun_camera_fp32_time_embedding(model)  # idempotent
-    e = model.time_embedding(value).to(torch.bfloat16)
-    e0 = model.time_projection(e)
-    assert e.dtype == torch.float32
+    e0 = model.forward(value)
+    expected_e = TimeEmbedding()(value)
+    expected_e0 = TimeProjection()(expected_e)
     assert model.time_projection.seen_dtype == torch.float32
     assert e0.dtype == torch.float32
-    torch.testing.assert_close(e, value * 1.25 + 0.125, rtol=0, atol=0)
-    torch.testing.assert_close(e0, (value * 1.25 + 0.125) * 2.0, rtol=0, atol=0)
+    torch.testing.assert_close(e0, expected_e0, rtol=0, atol=0)
 
 
 def test_fun_camera_serial_pass_resets_each_timestep():
