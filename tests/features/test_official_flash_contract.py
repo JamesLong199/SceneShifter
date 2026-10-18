@@ -487,6 +487,68 @@ def test_ref_scores_publish_only_after_complete_step(backend):
     assert router._pending_ref_loc_scores == {}
 
 
+def _single_subject_scores(foreground_token):
+    fg = torch.zeros(1, 8, 4)
+    bg = torch.ones(8, 4)
+    fg[:, :, foreground_token] = 2
+    bg[:, foreground_token] = 0
+    return fg, bg
+
+
+def _s2v_ref_attn_router(backend="wan_s2v"):
+    cfg = canonical_config(ref_loc_max_timesteps=3)
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[37, 32]],
+        "ref_attn_mask_drop_low_percent": 0.0,
+        "ref_attn_mask_min_component_size": 0,
+        "ref_attn_mask_hole_size": 0,
+    }
+    return FramePromptRouter(cfg, backend=backend, patch_height=2, patch_width=2)
+
+
+def test_s2v_freezes_last_applied_mask_at_ref_loc_cutoff():
+    router = _s2v_ref_attn_router()
+    block = router.active_block(0, 0, "cond")
+
+    for score_timestep, foreground_token in ((0, 0), (1, 1)):
+        router.store_ref_loc_head(
+            score_timestep, 37, 32, *_single_subject_scores(foreground_token)
+        )
+        router.complete_denoising_step()
+        router.refresh_live_mask_from_stored(score_timestep + 1, block)
+
+    expected_bg = router.live_bg.clone()
+    expected_fg = router.live_subject_fg.clone()
+    assert torch.all(expected_fg[:, :, 1])
+
+    router.store_ref_loc_head(2, 37, 32, *_single_subject_scores(2))
+    router.complete_denoising_step()
+    assert router.live_bg is None
+
+    router.refresh_live_mask_from_stored(3, block)
+    assert torch.equal(router.live_bg, expected_bg)
+    assert torch.equal(router.live_subject_fg, expected_fg)
+    assert torch.all(router.live_subject_fg[:, :, 1])
+    assert not torch.any(router.live_subject_fg[:, :, 2])
+
+
+@pytest.mark.parametrize("backend", ["wan_animate", "wan_fun_camera"])
+def test_s2v_ref_loc_freeze_does_not_change_other_wan_backends(backend):
+    router = _s2v_ref_attn_router(backend)
+    block = router.active_block(0, 0, "cond")
+
+    for score_timestep, foreground_token in ((0, 0), (1, 1), (2, 2)):
+        router.store_ref_loc_head(
+            score_timestep, 37, 32, *_single_subject_scores(foreground_token)
+        )
+        router.complete_denoising_step()
+        router.refresh_live_mask_from_stored(score_timestep + 1, block)
+
+    assert torch.all(router.live_subject_fg[:, :, 2])
+    assert not torch.any(router.live_subject_fg[:, :, 1])
+
+
 def test_animate_publishes_scores_at_last_cond_layer():
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["params"] = {

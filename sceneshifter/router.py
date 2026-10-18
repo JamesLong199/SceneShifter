@@ -183,6 +183,9 @@ class FramePromptRouter:
         self._pending_ref_loc_scores: Dict[
             Tuple[int, int, int], Tuple[torch.Tensor, torch.Tensor]
         ] = {}
+        self._s2v_frozen_live_masks: Dict[
+            Tuple[Any, ...], Tuple[torch.Tensor, torch.Tensor]
+        ] = {}
 
     def rebuild_latent_masks(self) -> None:
         """Downsample stored pixel masks onto the current latent grid."""
@@ -599,8 +602,26 @@ class FramePromptRouter:
         if str(params.get("mask_type", "")) != "ref_attn":
             return self.live_bg
         selectors = params.get("ref_attn_mask_selectors") or []
+        s2v_mask_key = None
+        if self.backend == "wan_s2v" and self.ref_loc_max_timesteps > 0:
+            s2v_mask_key = (
+                tuple(
+                    tuple(int(value) for value in selector[:2])
+                    for selector in selectors
+                    if isinstance(selector, (list, tuple)) and len(selector) >= 2
+                ),
+                float(params.get("ref_attn_mask_drop_low_percent", 10.0)),
+                int(params.get("ref_attn_mask_min_component_size", 20)),
+                int(params.get("ref_attn_mask_hole_size", 0)),
+            )
+            frozen = self._s2v_frozen_live_masks.get(s2v_mask_key)
+            if frozen is not None and int(timestep_idx) >= self.ref_loc_max_timesteps:
+                self.live_bg, self.live_subject_fg = frozen
+                return self.live_bg
         fg, bg = (None, None)
+        score_timestep = None
         if selectors:
+            score_timestep = self.latest_ref_loc_timestep(timestep_idx)
             fg, bg = self.selector_avg_scores(timestep_idx, selectors)
         if fg is None or bg is None:
             return self.live_bg
@@ -624,13 +645,24 @@ class FramePromptRouter:
             self.live_subject_fg = live_fg
             self.live_bg = live_bg_from_subject_fg(live_fg)
             return self.live_bg
-        return self.update_live_mask_from_class_scores(
+        live_bg = self.update_live_mask_from_class_scores(
             fg,
             bg,
             drop_low_percent=float(params.get("ref_attn_mask_drop_low_percent", 10.0)),
             min_component_size=int(params.get("ref_attn_mask_min_component_size", 20)),
             hole_size=int(params.get("ref_attn_mask_hole_size", 0)),
         )
+        if (
+            s2v_mask_key is not None
+            and score_timestep is not None
+            and score_timestep < self.ref_loc_max_timesteps
+            and self.live_subject_fg is not None
+        ):
+            self._s2v_frozen_live_masks[s2v_mask_key] = (
+                live_bg,
+                self.live_subject_fg,
+            )
+        return live_bg
 
     def publish_ref_loc_scores(self) -> None:
         """Make this forward's ref-loc scores visible to the next forward.
