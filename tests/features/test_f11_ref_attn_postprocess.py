@@ -3,9 +3,11 @@ import torch
 
 from sceneshifter.ref_attn import (
     derive_live_fg_from_class_scores,
+    derive_live_fg_from_class_scores_global,
     derive_live_fg_from_class_scores_numpy,
     derive_live_fg_from_union_scores,
     get_attn_map_with_target,
+    get_attn_map_with_target_animate,
     get_attn_map_with_target_chunked,
     get_attn_map_with_target_per_head,
     get_attn_map_with_target_per_head_chunked,
@@ -48,6 +50,49 @@ def test_get_attn_map_class_mean_matches_manual():
     assert scores.shape[0] == 2
     # Query 0 is aligned with key 0 (class 0 / FG).
     assert float(scores[0, 0]) > float(scores[1, 0])
+
+
+@pytest.mark.feature
+def test_animate_scores_scale_bfloat16_logits_after_qk():
+    torch.manual_seed(29)
+    q = torch.randn(1, 7, 1, 6, dtype=torch.bfloat16)
+    k = torch.randn(1, 3, 1, 6, dtype=torch.bfloat16)
+    targets = torch.tensor(
+        [[1, 0, 0], [0, 1, 1]], dtype=torch.bfloat16
+    )
+    actual = get_attn_map_with_target_animate(q, k, (1, 1, 3), targets)
+
+    logits = q.transpose(1, 2) @ k.transpose(1, 2).transpose(-2, -1)
+    probs = (logits * (q.shape[-1] ** -0.5)).softmax(-1)
+    expected = torch.cat(
+        [
+            (
+                probs[..., target.bool()].sum(-1)
+                / target.bool().sum()
+            ).permute(0, 2, 1)
+            for target in targets
+        ],
+        dim=0,
+    )
+    legacy_probs = (
+        (q * (q.shape[-1] ** -0.5)).transpose(1, 2)
+        @ k.transpose(1, 2).transpose(-2, -1)
+    ).softmax(-1)
+    legacy = torch.cat(
+        [
+            (
+                legacy_probs[..., target.bool()].sum(-1)
+                / target.bool().sum()
+            ).permute(0, 2, 1)
+            for target in targets
+        ],
+        dim=0,
+    )
+
+    assert actual is not None
+    assert torch.equal(actual, expected)
+    assert not torch.equal(actual, legacy)
+    assert logits.dtype == torch.bfloat16
 
 
 @pytest.mark.feature
@@ -115,6 +160,42 @@ def test_argmax_live_mask_uses_bg_class():
     assert mask is not None
     assert bool(mask[0, 0, 0])
     assert not bool(mask[0, 0, 1])
+
+
+@pytest.mark.feature
+def test_animate_drop_percentile_is_subject_global_across_frames():
+    fg = torch.tensor(
+        [[[1.0, 2.0, 3.0, 4.0], [100.0, 101.0, 102.0, 103.0]]]
+    )
+    bg = torch.zeros(2, 4)
+    global_mask = derive_live_fg_from_class_scores_global(
+        fg,
+        bg,
+        1,
+        4,
+        drop_low_percent=25.0,
+        min_component_size=1,
+        hole_size=0,
+    )
+    per_frame_mask = derive_live_fg_from_class_scores(
+        fg,
+        bg,
+        1,
+        4,
+        drop_low_percent=25.0,
+        min_component_size=1,
+        hole_size=0,
+    )
+
+    assert global_mask is not None and per_frame_mask is not None
+    assert global_mask[0].tolist() == [
+        [False, False, True, True],
+        [True, True, True, True],
+    ]
+    assert per_frame_mask[0].tolist() == [
+        [False, True, True, True],
+        [False, True, True, True],
+    ]
 
 
 @pytest.mark.feature

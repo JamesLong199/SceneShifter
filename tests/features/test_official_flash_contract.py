@@ -919,7 +919,7 @@ def test_animate_uses_memory_safe_model_dtype_selector_calls(monkeypatch):
         seen.append((int(visual_q.shape[2]), visual_q.dtype))
         return torch.zeros(2, 32)
 
-    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
+    monkeypatch.setattr(base_adapter, "get_attn_map_with_target_animate", scores)
     module = _Attn()
     module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
     module._ss_v_for_ref = torch.zeros(1, 32, 4, 2, dtype=torch.bfloat16)
