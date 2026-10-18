@@ -36,29 +36,13 @@ def _feature_fp32_context(args):
     return contextlib.nullcontext()
 
 
-def _closed_over_function(
-    value: Any,
-    name: str,
-    seen: Optional[set[int]] = None,
-) -> Optional[Any]:
+def _closed_over_function(value: Any, name: str) -> Optional[Any]:
     function = getattr(value, "__func__", value)
-    seen = set() if seen is None else seen
-    if id(function) in seen:
-        return None
-    seen.add(id(function))
     closure = getattr(function, "__closure__", None)
     freevars = getattr(getattr(function, "__code__", None), "co_freevars", ())
-    if not closure:
+    if not closure or name not in freevars:
         return None
-    if name in freevars:
-        return closure[freevars.index(name)].cell_contents
-    for cell in closure:
-        candidate = cell.cell_contents
-        if callable(candidate):
-            found = _closed_over_function(candidate, name, seen)
-            if found is not None:
-                return found
-    return None
+    return closure[freevars.index(name)].cell_contents
 
 
 def install_fun_camera_batched_cfg(model: Any) -> None:
