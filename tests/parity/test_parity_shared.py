@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from sceneshifter.checks import validate_config
+from sceneshifter.parity.common import load_parity_config, overlay_routing
 from sceneshifter.router import FramePromptRouter
 from tests.conftest import canonical_config
 
@@ -55,6 +57,18 @@ def test_every_parity_config_locks_both_revisions():
         assert len(str(locks.get("reference_feature_sha") or "")) == 40, cfg["backbone"]
         assert len(str(locks.get("reference_base_sha") or "")) == 40, cfg["backbone"]
         assert len(str(locks.get("official_sha") or "")) == 40, cfg["backbone"]
+
+
+@pytest.mark.parity
+def test_fun_camera_092_uses_whole_person_cover_without_head_mask():
+    cfg = load_parity_config("wan_fun_camera")
+    routing = canonical_config()
+    routing["background_mask_path"] = {"0": "/tmp/092_bg_mask.npy"}
+    routing.pop("head_mask_path", None)
+    merged = overlay_routing(routing, cfg["unified"])
+    assert merged["input_mask_cover_original"] is True
+    assert merged["input_mask_cover_head_only"] is False
+    validate_config(merged, backend="wan_fun_camera")
 
 
 def test_parity_launcher_exposes_current_env_media_tools(monkeypatch):

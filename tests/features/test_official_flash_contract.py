@@ -13,6 +13,7 @@ from sceneshifter.adapters.base import (
     wrap_audio_attention,
     wrap_cross_attention,
 )
+from sceneshifter.adapters.wan_fun_camera import install_fun_camera_fp32_time_embedding
 from sceneshifter.masks import downsample_subject_fg
 from sceneshifter.router import FramePromptRouter
 from tests.conftest import canonical_config
@@ -20,6 +21,41 @@ from tests.conftest import canonical_config
 
 class _Attn(nn.Module):
     pass
+
+
+def test_fun_camera_preserves_feature_fp32_time_modulation():
+    class TimeEmbedding(nn.Module):
+        def forward(self, value):
+            return value * 1.25 + 0.125
+
+    class TimeProjection(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.seen_dtype = None
+
+        def forward(self, value):
+            self.seen_dtype = value.dtype
+            return value * 2.0
+
+    class Model:
+        def __init__(self):
+            self.time_embedding = TimeEmbedding()
+            self.time_projection = TimeProjection()
+
+    value = torch.tensor([[1.0, 2.0]], dtype=torch.float32)
+    old_e = TimeEmbedding()(value).to(torch.bfloat16)
+    assert old_e.dtype == torch.bfloat16
+
+    model = Model()
+    install_fun_camera_fp32_time_embedding(model)
+    install_fun_camera_fp32_time_embedding(model)  # idempotent
+    e = model.time_embedding(value).to(torch.bfloat16)
+    e0 = model.time_projection(e)
+    assert e.dtype == torch.float32
+    assert model.time_projection.seen_dtype == torch.float32
+    assert e0.dtype == torch.float32
+    torch.testing.assert_close(e, value * 1.25 + 0.125, rtol=0, atol=0)
+    torch.testing.assert_close(e0, (value * 1.25 + 0.125) * 2.0, rtol=0, atol=0)
 
 
 def test_fun_camera_serial_pass_resets_each_timestep():
