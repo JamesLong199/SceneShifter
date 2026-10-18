@@ -397,6 +397,110 @@ def derive_live_fg_from_class_scores(
     return out
 
 
+def derive_live_fg_from_class_scores_s2v(
+    fg_maps: torch.Tensor,
+    bg_map: torch.Tensor,
+    spatial_h: int,
+    spatial_w: int,
+    *,
+    drop_low_percent: float = 20.0,
+    min_component_size: int = 20,
+    hole_size: int = 0,
+) -> Optional[torch.Tensor]:
+    """Wan S2V's global-per-subject confidence drop and OpenCV cleanup."""
+    fg = fg_maps.detach().float().cpu()
+    bg = bg_map.detach().float().cpu()
+    if fg.ndim == 2:
+        fg = fg.unsqueeze(1)
+    if bg.ndim == 1:
+        bg = bg.unsqueeze(0)
+    if fg.ndim != 3 or bg.ndim != 2:
+        return None
+    subjects, frames, spatial = [int(value) for value in fg.shape]
+    if tuple(bg.shape) != (frames, spatial):
+        return None
+    if spatial != int(spatial_h) * int(spatial_w):
+        return None
+
+    class_scores = torch.cat([fg, bg.unsqueeze(0)], dim=0)
+    labels = class_scores.argmax(0)
+    sorted_scores = class_scores.sort(0).values
+    confidence = sorted_scores[-1] - sorted_scores[-2]
+    subject_fg = torch.stack(
+        [labels == subject for subject in range(subjects)], dim=0
+    )
+    drop = float(drop_low_percent)
+    if drop > 0:
+        for subject in range(subjects):
+            selected = confidence[subject_fg[subject]]
+            if selected.numel():
+                threshold = torch.quantile(selected.float(), drop / 100.0)
+                subject_fg[subject] &= confidence > threshold
+
+    if int(min_component_size) > 0 or int(hole_size) > 0:
+        import cv2
+
+        processed = np.zeros(
+            (subjects, frames, int(spatial_h), int(spatial_w)),
+            dtype=np.uint8,
+        )
+        for subject in range(subjects):
+            for frame in range(frames):
+                mask = (
+                    subject_fg[subject, frame]
+                    .reshape(int(spatial_h), int(spatial_w))
+                    .numpy()
+                    .astype(np.uint8)
+                )
+                if int(min_component_size) > 0:
+                    count, components, stats, _ = cv2.connectedComponentsWithStats(
+                        mask, connectivity=4
+                    )
+                    keep = np.zeros_like(mask)
+                    for label in range(1, count):
+                        if (
+                            int(stats[label, cv2.CC_STAT_AREA])
+                            >= int(min_component_size)
+                        ):
+                            keep[components == label] = 1
+                    mask = keep
+                if int(hole_size) > 0:
+                    inverse = 1 - mask
+                    count, components, stats, _ = cv2.connectedComponentsWithStats(
+                        inverse, connectivity=4
+                    )
+                    border = set(
+                        np.unique(
+                            np.concatenate(
+                                (
+                                    components[0],
+                                    components[-1],
+                                    components[:, 0],
+                                    components[:, -1],
+                                )
+                            )
+                        ).tolist()
+                    )
+                    for label in range(1, count):
+                        if (
+                            label not in border
+                            and int(stats[label, cv2.CC_STAT_AREA])
+                            <= int(hole_size)
+                        ):
+                            mask[components == label] = 1
+                processed[subject, frame] = mask
+        subject_fg = torch.from_numpy(processed).bool().flatten(2)
+
+    overlaps = subject_fg.sum(0) > 1
+    if overlaps.any():
+        winners = fg.argmax(0)
+        subject_fg[:, overlaps] = False
+        for subject in range(subjects):
+            restore = overlaps & (winners == subject)
+            subject_fg[subject, restore] = True
+    return subject_fg
+
+
 def derive_live_fg_from_class_scores_numpy(
     fg_maps: torch.Tensor,
     bg_map: torch.Tensor,

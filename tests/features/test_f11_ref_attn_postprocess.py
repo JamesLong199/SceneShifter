@@ -4,6 +4,7 @@ import torch
 from sceneshifter.ref_attn import (
     derive_live_fg_from_class_scores,
     derive_live_fg_from_class_scores_numpy,
+    derive_live_fg_from_class_scores_s2v,
     derive_live_fg_from_union_scores,
     get_attn_map_with_target,
     get_attn_map_with_target_chunked,
@@ -115,6 +116,40 @@ def test_argmax_live_mask_uses_bg_class():
     assert mask is not None
     assert bool(mask[0, 0, 0])
     assert not bool(mask[0, 0, 1])
+
+
+@pytest.mark.feature
+def test_s2v_confidence_drop_uses_one_subject_threshold_across_frames():
+    fg = torch.tensor(
+        [
+            [
+                [0.4963, 0.7682, 0.0885, 0.1320],
+                [0.3074, 0.6341, 0.4901, 0.8964],
+            ]
+        ]
+    )
+    bg = torch.tensor(
+        [
+            [0.4556, 0.6323, 0.3489, 0.4017],
+            [0.0223, 0.1689, 0.2939, 0.5185],
+        ]
+    )
+    mask = derive_live_fg_from_class_scores_s2v(
+        fg,
+        bg,
+        2,
+        2,
+        drop_low_percent=50.0,
+        min_component_size=0,
+        hole_size=0,
+    )
+    assert mask is not None
+    assert mask.tolist() == [
+        [
+            [False, False, False, False],
+            [True, True, False, True],
+        ]
+    ]
 
 
 @pytest.mark.feature

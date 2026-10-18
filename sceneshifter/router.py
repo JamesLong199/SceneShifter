@@ -27,6 +27,7 @@ from .qscale_scope import (
 from .ref_attn import (
     derive_live_fg_from_class_scores,
     derive_live_fg_from_class_scores_numpy,
+    derive_live_fg_from_class_scores_s2v,
     derive_live_fg_from_union_scores,
     live_bg_from_subject_fg,
     postprocess_live_fg,
@@ -531,7 +532,11 @@ class FramePromptRouter:
         derive = (
             derive_live_fg_from_class_scores_numpy
             if self.backend == "multitalk"
-            else derive_live_fg_from_class_scores
+            else (
+                derive_live_fg_from_class_scores_s2v
+                if self.backend == "wan_s2v"
+                else derive_live_fg_from_class_scores
+            )
         )
         live_fg = derive(
             fg_scores,
