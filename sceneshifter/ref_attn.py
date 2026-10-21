@@ -338,40 +338,6 @@ def get_attn_map_with_target_per_head_split(
     return output
 
 
-def fun_ref_loc_score_maps(
-    visual_q: torch.Tensor,
-    ref_k: torch.Tensor,
-    shape,
-    ref_target_masks: torch.Tensor,
-) -> torch.Tensor:
-    """Per-head Fun scores ``[C, seq, H]`` in ``visual_q.dtype``.
-
-    Feature reduces ``softmax(QK) * mask / mask.sum`` in the activation dtype
-    and averages selector heads afterwards in float32. Averaging inside the
-    score kernel changes the mask installed for the next step.
-    """
-    if torch.is_tensor(shape):
-        _frames, height, width = (int(shape[0]), int(shape[1]), int(shape[2]))
-    else:
-        _frames, height, width = (int(value) for value in shape)
-    spatial = int(height * width)
-    ref_k = ref_k[:, :spatial].to(device=visual_q.device, dtype=visual_q.dtype)
-    scale = 1.0 / visual_q.shape[-1] ** 0.5
-    query = (visual_q * scale).transpose(1, 2)
-    key = ref_k.transpose(1, 2)
-    source = (query @ key.transpose(-2, -1)).softmax(dim=-1).to(dtype=visual_q.dtype)
-    targets = ref_target_masks.to(device=visual_q.device, dtype=visual_q.dtype)
-    maps = []
-    for mask in targets:
-        weighted = source * mask.view(1, 1, 1, -1)
-        per_head = weighted.sum(-1) / mask.sum()
-        per_head = per_head.permute(0, 2, 1)
-        if int(per_head.shape[0]) > 1:
-            per_head = per_head[-1:]
-        maps.append(per_head[0])
-    return torch.stack(maps, dim=0)
-
-
 def derive_fun_live_fg_from_score_diff(
     fg_map: torch.Tensor,
     bg_map: torch.Tensor,

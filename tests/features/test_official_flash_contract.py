@@ -1216,14 +1216,27 @@ def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):
     router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
     router.subject_fg_masks[0, :, 0] = True
     router.static_bg = ~router.subject_fg_masks.any(0)
-    seen = {}
+    seen = []
 
-    def scores(visual_q, ref_k, shape, targets):
-        seen["batch"] = int(visual_q.shape[0])
-        seen["value"] = float(visual_q[0, 0, 0, 0])
-        return torch.zeros(2, int(visual_q.shape[1]), int(visual_q.shape[2]))
+    def scores(visual_q, ref_k, shape, targets, *, split_num=2):
+        seen.append(
+            (
+                int(visual_q.shape[0]),
+                int(visual_q.shape[1]),
+                int(visual_q.shape[2]),
+                int(split_num),
+                float(visual_q[0, 0, 0, 0]),
+            )
+        )
+        return torch.zeros(
+            int(targets.shape[0]),
+            int(visual_q.shape[1]),
+            int(visual_q.shape[2]),
+        )
 
-    monkeypatch.setattr(base_adapter, "fun_ref_loc_score_maps", scores)
+    monkeypatch.setattr(
+        base_adapter, "get_attn_map_with_target_per_head_split", scores
+    )
     module = _Attn()
     module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
     module._ss_v_for_ref = torch.zeros(2, 32, 1, 1)
@@ -1231,7 +1244,65 @@ def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):
         [torch.zeros(32, 1, 1), torch.ones(32, 1, 1)], dim=0
     )
     base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
-    assert seen == {"batch": 1, "value": 1.0}
+    # Canonical split is frame 3: 12 tokens, then 20. Cond row only.
+    assert seen == [(1, 12, 1, 2, 1.0), (1, 20, 1, 2, 1.0)]
+
+
+def test_fun_ref_loc_scores_compiled_chunks_per_segment_not_selector_heads(monkeypatch):
+    """The old Fun mask scored the globally rotated query for every segment."""
+    from sceneshifter.rope import rope_apply
+
+    cfg = _fun_ref_attn_config()
+    cfg["attention_control_schedule"][0]["params"]["ref_attn_mask_selectors"] = [
+        [0, 2],
+        [0, 3],
+    ]
+    router = FramePromptRouter(
+        cfg, backend="wan_fun_camera", patch_height=2, patch_width=2
+    )
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    seen = []
+
+    def scores(visual_q, ref_k, shape, targets, *, split_num=2):
+        seen.append(visual_q.detach().clone())
+        return torch.zeros(
+            int(targets.shape[0]),
+            int(visual_q.shape[1]),
+            int(visual_q.shape[2]),
+        )
+
+    monkeypatch.setattr(
+        base_adapter, "get_attn_map_with_target_per_head_split", scores
+    )
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 4, 6, dtype=torch.bfloat16)
+    q = torch.zeros(1, 32, 4, 6, dtype=torch.bfloat16)
+    pre = torch.ones(1, 32, 4, 6, dtype=torch.bfloat16)
+    freqs = torch.randn(16, 3, dtype=torch.float64) + 1j * torch.randn(
+        16, 3, dtype=torch.float64
+    )
+    module._ss_q_pre_rope = pre
+    module._ss_freqs = freqs
+    base_adapter._collect_live_ref_attn(router, module, q, q, 3, 0, "cond")
+    assert [(int(item.shape[1]), int(item.shape[2])) for item in seen] == [
+        (12, 4),
+        (20, 4),
+    ]
+    assert torch.equal(seen[0], q[:, :12])
+    block = router.active_block(3, 0, "cond")
+    scaled = router.apply_q_scale(pre, block)
+    expected = rope_apply(
+        scaled[:, 12:32],
+        torch.tensor([[5, 2, 2]], dtype=torch.long),
+        freqs,
+    ).to(dtype=q.dtype)
+    assert torch.equal(seen[1], expected)
+    assert not torch.equal(seen[1], q[:, 12:32])
+    assert (3, 0, 2) in router._pending_ref_loc_scores
+    assert (3, 0, 3) in router._pending_ref_loc_scores
 
 
 def test_fantasy_ref_loc_scores_union_fg_in_fp32(monkeypatch):

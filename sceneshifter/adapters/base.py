@@ -17,7 +17,6 @@ from ..attention import gather_attention, scaled_dot_product
 from ..layouts import S2VTokenLayout
 from ..parity.trace import trace_tensor
 from ..ref_attn import (
-    fun_ref_loc_score_maps,
     get_attn_map_with_target,
     get_attn_map_with_target_per_head_chunked,
     get_attn_map_with_target_per_head_split,
@@ -428,6 +427,106 @@ def _wanted_ref_heads(params: Dict[str, Any], block_idx: Any, num_heads: int) ->
     return wanted
 
 
+def _fun_camera_score_query(
+    router: FramePromptRouter,
+    q_global: torch.Tensor,
+    pre_rope: Optional[torch.Tensor],
+    freqs: Optional[torch.Tensor],
+    block: Optional[Dict[str, Any]],
+    shape,
+    start: int,
+    end: int,
+    segment: int,
+    spatial: int,
+) -> torch.Tensor:
+    """Query segment Feature uses for ref-loc scores.
+
+    Scene 0 is the globally rotated query. Later scenes are scaled from the
+    pre-RoPE query and rotated with temporal indices starting at 0. Attention
+    itself keeps the global RoPE; only the score query is local.
+    """
+    if int(segment) == 0 or not torch.is_tensor(pre_rope) or not torch.is_tensor(freqs):
+        return q_global[:, start:end]
+    pre = pre_rope
+    if int(pre.shape[0]) != int(q_global.shape[0]):
+        pre = pre[-int(q_global.shape[0]) :]
+    scaled = router.apply_q_scale(pre[:, : int(q_global.shape[1])].to(dtype=q_global.dtype), block)
+    if torch.is_tensor(shape):
+        _frames, height, width = (int(shape[0]), int(shape[1]), int(shape[2]))
+    else:
+        _frames, height, width = (int(value) for value in shape)
+    seg_frames = (int(end) - int(start)) // int(spatial)
+    grid = torch.tensor(
+        [[seg_frames, int(height), int(width)]] * int(scaled.shape[0]),
+        device=scaled.device,
+        dtype=torch.long,
+    )
+    local = rope_apply(scaled[:, start:end], grid, freqs, frame_index_scale=1)
+    return local.to(dtype=q_global.dtype)
+
+
+def _fun_camera_ref_loc_scores(
+    router: FramePromptRouter,
+    q_for_scores: torch.Tensor,
+    k_for_scores: torch.Tensor,
+    shape,
+    targets: torch.Tensor,
+    video: int,
+    spatial: int,
+    valid_heads: List[int],
+    pre_rope: Optional[torch.Tensor] = None,
+    freqs: Optional[torch.Tensor] = None,
+    block: Optional[Dict[str, Any]] = None,
+) -> torch.Tensor:
+    """Fun ref-loc maps from compiled 20-head chunks, one query segment at a time.
+
+    Feature scores each segment with ``@torch.compile``d
+    ``calculate_x_ref_attn_map`` (``split_num=2``). New-scene segments use a
+    locally rotated query. Scoring the globally rotated query leaves the
+    selector average almost unchanged and still flips ``fg - bg`` near zero.
+    """
+    pieces = []
+    covered = 0
+    for start, end, segment in router.segment_ranges(spatial):
+        start = max(0, int(start))
+        end = min(int(end), int(video))
+        if end <= start:
+            continue
+        query = _fun_camera_score_query(
+            router,
+            q_for_scores,
+            pre_rope,
+            freqs,
+            block,
+            shape,
+            start,
+            end,
+            int(segment),
+            spatial,
+        )
+        piece = get_attn_map_with_target_per_head_split(
+            query,
+            k_for_scores,
+            shape,
+            targets,
+            split_num=2,
+        )
+        if piece is None:
+            raise RuntimeError(
+                "wan_fun_camera ref-loc chunk returned no scores for "
+                f"tokens [{start}, {end})"
+            )
+        pieces.append(piece)
+        covered += end - start
+    if not pieces or covered != int(video):
+        raise RuntimeError(
+            f"wan_fun_camera ref-loc segments cover {covered} tokens, expected {int(video)}"
+        )
+    full = torch.cat(pieces, dim=1)
+    head_index = torch.tensor(valid_heads, dtype=torch.long, device=full.device)
+    return full.index_select(2, head_index)
+
+
 def _collect_live_ref_attn(
     router: FramePromptRouter,
     module: nn.Module,
@@ -554,14 +653,20 @@ def _collect_live_ref_attn(
     fun_head_scores = None
     try:
         if backend == "wan_fun_camera":
-            # Keep each selector head. Feature averages those maps in float32
-            # after a bf16 mask reduction; a fused head mean is a different mask.
-            head_index = torch.tensor(valid_heads, dtype=torch.long, device=q.device)
-            fun_head_scores = fun_ref_loc_score_maps(
-                q_for_scores.index_select(2, head_index),
-                k_for_scores.index_select(2, head_index),
+            # Compiled split_num=2 chunks per segment. New-scene scores use
+            # local RoPE; attention Q stays on the global rotation.
+            fun_head_scores = _fun_camera_ref_loc_scores(
+                router,
+                q_for_scores,
+                k_for_scores,
                 shape,
                 targets,
+                video,
+                spatial,
+                valid_heads,
+                pre_rope=getattr(module, "_ss_q_pre_rope", None),
+                freqs=getattr(module, "_ss_freqs", None),
+                block=router.active_block(int(timestep_idx), block_idx, pass_type),
             )
             scores = None
             per_head_scores = None
@@ -1084,7 +1189,7 @@ def _install_multitalk_prerope_stash(globals_dict: Dict[str, Any]) -> None:
         router = getattr(module, "frame_prompt_router", None) if module is not None else None
         if (
             module is not None
-            and getattr(router, "backend", None) == "multitalk"
+            and getattr(router, "backend", None) in {"multitalk", "wan_fun_camera"}
             and not getattr(module, "_ss_rope_q_saved", False)
         ):
             module._ss_q_pre_rope = x.detach()
@@ -1205,7 +1310,7 @@ def wrap_self_attention(
 
     if patched_official:
 
-        if getattr(router, "backend", None) == "multitalk":
+        if getattr(router, "backend", None) in {"multitalk", "wan_fun_camera"}:
             _install_multitalk_prerope_stash(globals_dict)
 
         def forward(self, *args, **kwargs):
