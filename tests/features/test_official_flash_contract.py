@@ -1094,6 +1094,44 @@ def _seed_ref_router(backend: str):
     return router
 
 
+def test_fun_ref_loc_mask_keeps_score_ties_in_background():
+    cfg = canonical_config(num_frames=1, frame_splits=[])
+    cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[37, 32], [37, 35]],
+        "ref_attn_mask_drop_low_percent": 0.0,
+        "ref_attn_mask_min_component_size": 1,
+        "ref_attn_mask_hole_size": 0,
+    }
+    fg = torch.tensor([[[0.50, 0.20, 0.10, 0.00]]])
+    bg = torch.tensor([[0.40, 0.20, 0.30, 0.80]])
+    fun = FramePromptRouter(cfg, backend="wan_fun_camera", patch_height=2, patch_width=2)
+    other = FramePromptRouter(cfg, backend="multitalk", patch_height=2, patch_width=2)
+    for router in (fun, other):
+        router.store_ref_loc_head(3, 37, 32, fg, bg)
+        router.store_ref_loc_head(3, 37, 35, fg.clone(), bg.clone())
+        router._ss_timestep = 3
+    previous = torch.ones(1, 4, dtype=torch.bool)
+    fun.live_bg = previous
+    fun.store_ref_loc_head(3, 37, 32, torch.zeros_like(fg), torch.ones_like(bg))
+    fun.store_ref_loc_head(3, 37, 35, torch.zeros_like(fg), torch.ones_like(bg))
+    fun.complete_denoising_step()
+    assert fun.live_bg is previous
+
+    fun._pending_ref_loc_scores = {}
+    fun._ref_loc_scores = {}
+    fun.live_bg = None
+    fun.store_ref_loc_head(3, 37, 32, fg, bg)
+    fun.store_ref_loc_head(3, 37, 35, fg.clone(), bg.clone())
+    fun.complete_denoising_step()
+    assert fun.live_bg.tolist() == [[False, True, True, True]]
+
+    other.publish_ref_loc_scores()
+    other.refresh_live_mask_from_stored(3, other.active_block(3, None, "cond"))
+    assert bool(other.live_bg[0, 1].item()) is False
+
+
 def test_fun_ref_loc_waits_for_schedule_and_skips_per_layer_refresh():
     fun = _seed_ref_router("wan_fun_camera")
     other = _seed_ref_router("multitalk")

@@ -338,6 +338,62 @@ def get_attn_map_with_target_per_head_split(
     return output
 
 
+def derive_fun_live_fg_from_score_diff(
+    fg_map: torch.Tensor,
+    bg_map: torch.Tensor,
+    spatial_h: int,
+    spatial_w: int,
+    *,
+    drop_low_percent: float = 10.0,
+    min_component_size: int = 20,
+    hole_size: int = 0,
+    ext_size: int = 0,
+) -> Optional[torch.Tensor]:
+    """Feature Fun FG mask from averaged ref-loc scores.
+
+    Foreground is ``fg - bg > 0``. Ties stay background. The low tail is the
+    percentile of that positive difference, not an argmax confidence.
+    Returns bool ``[F, L]``, or ``None`` when the grid does not match.
+    """
+    fg = fg_map.detach().float().cpu().numpy()
+    bg = bg_map.detach().float().cpu().numpy()
+    if fg.shape != bg.shape:
+        return None
+    if fg.ndim == 1:
+        fg = fg[None, :]
+        bg = bg[None, :]
+    if fg.ndim != 2:
+        return None
+    frames, spatial = (int(fg.shape[0]), int(fg.shape[1]))
+    if spatial != int(spatial_h) * int(spatial_w) or frames <= 0:
+        return None
+    out = np.zeros((frames, spatial), dtype=np.uint8)
+    for frame_idx in range(frames):
+        diff = fg[frame_idx] - bg[frame_idx]
+        fg_mask = (diff > 0).astype(np.uint8)
+        if float(drop_low_percent) > 0.0:
+            vals = diff[fg_mask > 0]
+            if vals.size > 0:
+                thresh = float(np.percentile(vals, float(drop_low_percent)))
+                fg_mask = ((diff > 0) & (diff > thresh)).astype(np.uint8)
+        mask_2d = fg_mask.reshape(int(spatial_h), int(spatial_w))
+        mask_2d = remove_small_components(mask_2d, int(min_component_size))
+        mask_2d = fill_small_holes(mask_2d, int(hole_size))
+        if int(ext_size) > 0:
+            grown = mask_2d.astype(np.uint8)
+            for _ in range(int(ext_size)):
+                prev = grown
+                nxt = prev.copy()
+                nxt[1:, :] |= prev[:-1, :]
+                nxt[:-1, :] |= prev[1:, :]
+                nxt[:, 1:] |= prev[:, :-1]
+                nxt[:, :-1] |= prev[:, 1:]
+                grown = nxt
+            mask_2d = grown
+        out[frame_idx] = mask_2d.reshape(-1)
+    return torch.from_numpy(out > 0)
+
+
 def derive_live_fg_from_class_scores(
     fg_maps: torch.Tensor,
     bg_map: torch.Tensor,
