@@ -936,6 +936,84 @@ def test_active_segment_routing_fails_without_text_embeddings():
         module(torch.randn(1, 8, 4), torch.randn(1, 6, 4))
 
 
+def test_fun_camera_batched_cfg_splits_text_kv_and_other_backends_do_not():
+    cfg = canonical_config(segment_prompt_start_timestep=3)
+    router = FramePromptRouter(
+        cfg, backend="wan_fun_camera", patch_height=2, patch_width=2
+    )
+    router.set_text_embeddings(
+        [torch.full((1, 3, 4), 10.0), torch.full((1, 3, 4), 20.0)]
+    )
+
+    class Remember(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.shapes = []
+
+        def forward(self, value):
+            self.shapes.append(tuple(value.shape))
+            return value
+
+    class FunCross(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.num_heads = 1
+            self.head_dim = 4
+            self.q = Remember()
+            self.k = Remember()
+            self.v = Remember()
+            self.k_img = Remember()
+            self.v_img = Remember()
+            self.norm_q = nn.Identity()
+            self.norm_k = nn.Identity()
+            self.norm_k_img = nn.Identity()
+            self.o = nn.Identity()
+            self.full_batches = []
+
+        def forward(self, x, context, context_lens=None, dtype=None, t=0):
+            self.full_batches.append(int(context.shape[0]))
+            return x
+
+    fun = FunCross()
+    wrap_cross_attention(fun, router)
+    fun._ss_pass = "uncond"  # Batched CFG is not a pure uncond pass.
+    x = torch.randn(2, 32, 4)
+    context = torch.zeros(2, 260, 4)
+    fun._ss_timestep = 0
+    fun(x, context)
+    assert fun.full_batches == [2]
+    assert fun.k.shapes == []
+
+    fun.full_batches.clear()
+    fun._ss_timestep = 3
+    fun(x, context)
+    assert fun.full_batches == []
+    assert fun.q.shapes == [(2, 32, 4)]
+    assert fun.k.shapes == [(1, 3, 4)] * 4
+    assert fun.v.shapes == [(1, 3, 4)] * 4
+    assert fun.k_img.shapes == [(2, 257, 4)]
+
+    other_router = FramePromptRouter(
+        cfg, backend="multitalk", patch_height=2, patch_width=2
+    )
+    other_router.set_text_embeddings(
+        [torch.full((1, 3, 4), 10.0), torch.full((1, 3, 4), 20.0)]
+    )
+    seen = []
+
+    class Other(nn.Module):
+        def forward(self, x, context, context_lens=None):
+            seen.append(int(context.shape[0]))
+            return x
+
+    other = Other()
+    wrap_cross_attention(other, other_router)
+    other._ss_timestep = 3
+    other._ss_pass = "uncond"
+    other(x, context)
+    assert seen == [2]
+
+
 def test_fun_camera_batched_cfg_routes_only_cond_row():
     cfg = canonical_config()
     router = FramePromptRouter(
