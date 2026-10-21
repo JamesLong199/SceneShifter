@@ -989,6 +989,85 @@ def test_fun_camera_serialized_cfg_routes_first_call_only():
     assert seen == [10.0, 20.0, -1.0]
 
 
+def _fun_ref_attn_config():
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[0, 0]],
+        "ref_attn_mask_drop_low_percent": 0.0,
+        "ref_attn_mask_min_component_size": 1,
+        "ref_attn_mask_hole_size": 0,
+        "auto_q_scale": True,
+        "q_scale_bg_only": True,
+    }
+    cfg["background_mask_path"] = None
+    return cfg
+
+
+def _seed_ref_router(backend: str):
+    router = FramePromptRouter(
+        _fun_ref_attn_config(), backend=backend, patch_height=2, patch_width=2
+    )
+    router.ref_loc_max_timesteps = 15
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    return router
+
+
+def test_fun_ref_loc_waits_for_schedule_and_skips_per_layer_refresh():
+    fun = _seed_ref_router("wan_fun_camera")
+    other = _seed_ref_router("multitalk")
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 1, 4)
+    q = torch.randn(1, 32, 1, 4)
+
+    base_adapter._collect_live_ref_attn(fun, module, q, q, 2, 0, "cond")
+    assert fun._pending_ref_loc_scores == {}
+    base_adapter._collect_live_ref_attn(other, module, q, q, 2, 0, "cond")
+    assert (2, 0, 0) in other._pending_ref_loc_scores
+
+    base_adapter._collect_live_ref_attn(fun, module, q, q, 3, 0, "cond")
+    assert (3, 0, 0) in fun._pending_ref_loc_scores
+    assert (3, 0, 0) not in fun._ref_loc_scores
+    base_adapter._collect_live_ref_attn(fun, module, q, q, 40, 0, "cond")
+    assert (40, 0, 0) not in fun._pending_ref_loc_scores
+
+    sentinel = torch.zeros(8, 4, dtype=torch.bool)
+    fun.live_bg = sentinel
+    fun._ref_loc_scores[(0, 0, 0)] = (
+        torch.ones(1, 8, 4),
+        torch.zeros(8, 4),
+    )
+
+    def fake_flash(*args, **kwargs):
+        return args[0]
+
+    module.frame_prompt_router = fun
+    module._ss_timestep = 3
+    module._ss_block_idx = 0
+    module._ss_pass = "cond"
+    scene_masked_official_flash(
+        fake_flash,
+        "flash_attention",
+        module,
+        fun,
+        (q, q.clone(), q.clone()),
+        {"k_lens": torch.tensor([32])},
+    )
+    assert fun.live_bg is sentinel
+
+    fun._ss_timestep = 2
+    fun.complete_denoising_step()
+    assert fun.live_bg is sentinel
+    fun._ss_timestep = 3
+    fun.complete_denoising_step()
+    assert (3, 0, 0) in fun._ref_loc_scores
+    assert fun.live_bg is not None
+
+
 def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["params"] = {

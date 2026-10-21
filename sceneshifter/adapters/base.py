@@ -449,9 +449,17 @@ def _collect_live_ref_attn(
         and getattr(router, "backend", None) != "fantasytalking"
     ):
         return
-    max_t = int(getattr(router, "ref_loc_max_timesteps", 0) or 0)
-    if max_t > 0 and int(timestep_idx) >= max_t:
-        return
+    if getattr(router, "backend", None) == "wan_fun_camera":
+        # Feature collects only inside the inclusive schedule window. The
+        # count-style ``step >= ref_loc_max_timesteps`` gate would score steps
+        # before t_min and then apply that mask at the first scheduled step.
+        window = router.ref_attn_timestep_window()
+        if window is None or not (window[0] <= int(timestep_idx) <= window[1]):
+            return
+    else:
+        max_t = int(getattr(router, "ref_loc_max_timesteps", 0) or 0)
+        if max_t > 0 and int(timestep_idx) >= max_t:
+            return
     if block_idx is None:
         return
     params = _ref_attn_schedule_params(router)
@@ -774,16 +782,20 @@ def scene_masked_official_flash(
             **trace_meta,
         )
         return out
-    refresh_idx = int(timestep_idx)
-    if (
-        bool(getattr(router, "freeze_live_mask", False))
-        and getattr(router, "backend", None) == "fantasytalking"
-        and refresh_idx > 0
-    ):
-        # Official Fantasy freezes one selector mask for all passes of step t
-        # from scores collected at t-1, then rebuilds after the step.
-        refresh_idx -= 1
-    router.refresh_live_mask_from_stored(refresh_idx, block)
+    # Fun Camera keeps the mask published after the previous forward.
+    # Rebuilding it on every layer would apply scores from this same step,
+    # or from steps before the schedule, to block 0.
+    if getattr(router, "backend", None) != "wan_fun_camera":
+        refresh_idx = int(timestep_idx)
+        if (
+            bool(getattr(router, "freeze_live_mask", False))
+            and getattr(router, "backend", None) == "fantasytalking"
+            and refresh_idx > 0
+        ):
+            # Official Fantasy freezes one selector mask for all passes of step t
+            # from scores collected at t-1, then rebuilds after the step.
+            refresh_idx -= 1
+        router.refresh_live_mask_from_stored(refresh_idx, block)
     trace_tensor(
         "live_bg",
         getattr(router, "live_bg", None),

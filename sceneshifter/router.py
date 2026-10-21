@@ -632,6 +632,20 @@ class FramePromptRouter:
             hole_size=int(params.get("ref_attn_mask_hole_size", 0)),
         )
 
+    def ref_attn_timestep_window(self) -> Optional[Tuple[int, int]]:
+        """Inclusive ``(t_min, t_max)`` over ref-attn schedule blocks."""
+        bounds = []
+        for block in self.schedule or []:
+            params = (block or {}).get("params") or {}
+            if str(params.get("mask_type", "")).strip().lower() != "ref_attn":
+                continue
+            span = block.get("timestep_range")
+            if isinstance(span, (list, tuple)) and len(span) == 2:
+                bounds.append((int(span[0]), int(span[1])))
+        if not bounds:
+            return None
+        return min(lo for lo, _hi in bounds), max(hi for _lo, hi in bounds)
+
     def publish_ref_loc_scores(self) -> None:
         """Make this forward's ref-loc scores visible to the next forward.
 
@@ -649,7 +663,20 @@ class FramePromptRouter:
         self._selector_scores = dict(self._pending_selector_scores)
         self._pending_selector_scores = {}
         self.publish_ref_loc_scores()
-        if self.backend in {"wan_s2v", "wan_animate", "wan_fun_camera"}:
+        if self.backend == "wan_fun_camera":
+            # Feature installs one mask after the forward that collected it.
+            # The next step keeps that mask; this step still used the previous one.
+            finished = getattr(self, "_ss_timestep", None)
+            window = self.ref_attn_timestep_window()
+            if (
+                finished is not None
+                and window is not None
+                and window[0] <= int(finished) <= window[1]
+            ):
+                block = self.active_block(int(finished), None, "cond")
+                self.refresh_live_mask_from_stored(int(finished), block)
+            return
+        if self.backend in {"wan_s2v", "wan_animate"}:
             self.live_bg = None
             self.live_subject_fg = None
 
