@@ -21,7 +21,8 @@
       "--control_camera_txt", "asset/Zoom_Out.txt",
       "--size_bucket", "sceneshifter-480",
       "--seed", "43",
-      "--num_inference_steps", "50"
+      "--num_inference_steps", "50",
+      "--gpu_memory_mode", "model_cpu_offload"
     ]
   },
   "unified": {

@@ -1312,7 +1312,9 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
         scheduler=scheduler,
         clip_image_encoder=clip,
     )
-    pipeline.to("cuda")
+    # model_cpu_offload keeps UMT5 and CLIP off the GPU during the DiT loop.
+    # model_full_load leaves them resident and OOMs on a shared 80 GB card.
+    pipeline.enable_model_cpu_offload(device="cuda")
     sample_size = list(unified.get("sample_size") or [640, 640])
     router = _create_router(
         cfg, routing, patch_h=max(1, int(sample_size[0]) // 16), patch_w=max(1, int(sample_size[1]) // 16)
