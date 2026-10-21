@@ -17,6 +17,7 @@ from ..attention import gather_attention, scaled_dot_product
 from ..layouts import S2VTokenLayout
 from ..parity.trace import trace_tensor
 from ..ref_attn import (
+    fun_ref_loc_score_maps,
     get_attn_map_with_target,
     get_attn_map_with_target_per_head_chunked,
     get_attn_map_with_target_per_head_split,
@@ -550,8 +551,21 @@ def _collect_live_ref_attn(
     backend = getattr(router, "backend", None)
     individual_scores = None
     split_scores = None
+    fun_head_scores = None
     try:
-        if backend == "multitalk":
+        if backend == "wan_fun_camera":
+            # Keep each selector head. Feature averages those maps in float32
+            # after a bf16 mask reduction; a fused head mean is a different mask.
+            head_index = torch.tensor(valid_heads, dtype=torch.long, device=q.device)
+            fun_head_scores = fun_ref_loc_score_maps(
+                q_for_scores.index_select(2, head_index),
+                k_for_scores.index_select(2, head_index),
+                shape,
+                targets,
+            )
+            scores = None
+            per_head_scores = None
+        elif backend == "multitalk":
             # Temporary: compiled 20-head chunks, and once the scene schedule is
             # on, new-scene score queries use local RoPE. Attention Q stays global.
             pre_rope = getattr(module, "_ss_q_pre_rope", None)
@@ -634,6 +648,7 @@ def _collect_live_ref_attn(
         and per_head_scores is None
         and individual_scores is None
         and split_scores is None
+        and fun_head_scores is None
     ):
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} heads "
@@ -684,6 +699,27 @@ def _collect_live_ref_attn(
                 num_subjects, router.num_frames, spatial
             )
             bg = per_head_scores[num_subjects, :, position].reshape(
+                router.num_frames, spatial
+            )
+            router.store_ref_loc_head(
+                timestep_idx, int(block_idx), int(head), fg, bg
+            )
+    elif fun_head_scores is not None:
+        if (
+            int(fun_head_scores.shape[0]) != num_subjects + 1
+            or int(fun_head_scores.shape[1]) != video
+            or int(fun_head_scores.shape[2]) != len(valid_heads)
+        ):
+            raise RuntimeError(
+                f"wan_fun_camera ref-attn selector L{int(block_idx)} score shape "
+                f"{tuple(fun_head_scores.shape)} does not match "
+                f"classes={num_subjects + 1} video={video} heads={len(valid_heads)}"
+            )
+        for position, head in enumerate(valid_heads):
+            fg = fun_head_scores[:num_subjects, :, position].reshape(
+                num_subjects, router.num_frames, spatial
+            )
+            bg = fun_head_scores[num_subjects, :, position].reshape(
                 router.num_frames, spatial
             )
             router.store_ref_loc_head(

@@ -1094,6 +1094,26 @@ def _seed_ref_router(backend: str):
     return router
 
 
+def test_fun_ref_loc_keeps_selector_heads_separate():
+    cfg = _fun_ref_attn_config()
+    cfg["attention_control_schedule"][0]["params"]["ref_attn_mask_selectors"] = [[0, 0], [0, 1]]
+    router = FramePromptRouter(cfg, backend="wan_fun_camera", patch_height=2, patch_width=2)
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 2, 4)
+    q = torch.zeros(1, 32, 2, 4)
+    q[:, :, 1, :] = 1
+    k = torch.zeros(1, 32, 2, 4)
+    k[:, 0, 1, :] = 4
+    base_adapter._collect_live_ref_attn(router, module, q, k, 3, 0, "cond")
+    first = router._pending_ref_loc_scores[(3, 0, 0)][0]
+    second = router._pending_ref_loc_scores[(3, 0, 1)][0]
+    assert not torch.equal(first, second)
+
+
 def test_fun_ref_loc_mask_keeps_score_ties_in_background():
     cfg = canonical_config(num_frames=1, frame_splits=[])
     cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]
@@ -1201,9 +1221,9 @@ def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):
     def scores(visual_q, ref_k, shape, targets):
         seen["batch"] = int(visual_q.shape[0])
         seen["value"] = float(visual_q[0, 0, 0, 0])
-        return torch.zeros(2, 32)
+        return torch.zeros(2, int(visual_q.shape[1]), int(visual_q.shape[2]))
 
-    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
+    monkeypatch.setattr(base_adapter, "fun_ref_loc_score_maps", scores)
     module = _Attn()
     module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
     module._ss_v_for_ref = torch.zeros(2, 32, 1, 1)
