@@ -148,6 +148,46 @@ def get_attn_map_with_target(
     return torch.cat(maps, dim=0)
 
 
+def get_attn_map_with_target_animate(
+    visual_q: torch.Tensor,
+    ref_k: torch.Tensor,
+    shape,
+    ref_target_masks: torch.Tensor,
+) -> Optional[torch.Tensor]:
+    """Wan Animate one-head scores with native bfloat16 operation ordering.
+
+    Animate forms QK in model dtype, scales the logits, and only then applies
+    softmax. Scaling Q before QK changes bfloat16 rounding and the live mask.
+    """
+    if torch.is_tensor(shape):
+        _frames, height, width = (int(shape[0]), int(shape[1]), int(shape[2]))
+    else:
+        _frames, height, width = (int(value) for value in shape)
+    spatial = int(height * width)
+    if visual_q.ndim != 4 or int(visual_q.shape[2]) != 1:
+        raise ValueError(
+            "Wan Animate ref-attn scoring requires one head per call, got "
+            f"{tuple(visual_q.shape)}"
+        )
+    key = ref_k[:, :spatial].to(
+        device=visual_q.device, dtype=visual_q.dtype
+    )
+    query = visual_q.transpose(1, 2)
+    key = key.transpose(1, 2)
+    logits = query @ key.transpose(-2, -1)
+    probs = (logits * (visual_q.shape[-1] ** -0.5)).softmax(dim=-1)
+    targets = ref_target_masks.to(device=visual_q.device)
+    maps = []
+    for target in targets:
+        selected = target > 0.5
+        if not bool(selected.any()):
+            maps.append(torch.zeros_like(probs[..., 0]).permute(0, 2, 1))
+            continue
+        per_head = probs[..., selected].sum(-1) / selected.sum()
+        maps.append(per_head.permute(0, 2, 1))
+    return torch.cat(maps, dim=0)
+
+
 def get_attn_map_with_target_chunked(
     visual_q: torch.Tensor,
     ref_k: torch.Tensor,
@@ -499,6 +539,82 @@ def derive_live_fg_from_class_scores_s2v(
             restore = overlaps & (winners == subject)
             subject_fg[subject, restore] = True
     return subject_fg
+
+
+def derive_live_fg_from_class_scores_global(
+    fg_maps: torch.Tensor,
+    bg_map: torch.Tensor,
+    spatial_h: int,
+    spatial_w: int,
+    *,
+    drop_low_percent: float = 20.0,
+    min_component_size: int = 20,
+    hole_size: int = 0,
+) -> Optional[torch.Tensor]:
+    """Wan Animate class mask with one percentile per subject across all frames."""
+    fg = fg_maps.detach().float().cpu()
+    bg = bg_map.detach().float().cpu()
+    if fg.ndim == 2:
+        fg = fg.unsqueeze(1)
+    if bg.ndim == 1:
+        bg = bg.unsqueeze(0)
+    if fg.ndim != 3 or bg.ndim != 2:
+        return None
+    num_subjects, num_frames, spatial = [int(value) for value in fg.shape]
+    if tuple(bg.shape) != (num_frames, spatial):
+        return None
+    if (
+        spatial != int(spatial_h) * int(spatial_w)
+        or num_frames <= 0
+        or num_subjects <= 0
+    ):
+        return None
+
+    class_scores = torch.cat([fg, bg.unsqueeze(0)], dim=0)
+    labels = torch.argmax(class_scores, dim=0)
+    sorted_scores = torch.sort(class_scores, dim=0).values
+    confidence = sorted_scores[-1] - sorted_scores[-2]
+    assigned = torch.stack(
+        [labels == subject for subject in range(num_subjects)], dim=0
+    )
+    if float(drop_low_percent) > 0:
+        for subject in range(num_subjects):
+            selected = confidence[assigned[subject]]
+            if selected.numel():
+                threshold = torch.quantile(
+                    selected.float(), float(drop_low_percent) / 100.0
+                )
+                assigned[subject] &= confidence > threshold
+
+    out = torch.zeros(num_subjects, num_frames, spatial, dtype=torch.bool)
+    for frame in range(num_frames):
+        proposed = []
+        for subject in range(num_subjects):
+            binary = (
+                assigned[subject, frame]
+                .numpy()
+                .astype(np.uint8)
+                .reshape(int(spatial_h), int(spatial_w))
+            )
+            binary = remove_small_components(binary, int(min_component_size))
+            binary = fill_small_holes(binary, int(hole_size))
+            proposed.append(binary)
+        stacked = np.stack(proposed, axis=0)
+        overlap = stacked.sum(axis=0)
+        if np.any(overlap > 1):
+            winners = (
+                torch.argmax(fg[:, frame], dim=0)
+                .numpy()
+                .reshape(int(spatial_h), int(spatial_w))
+            )
+            ys, xs = np.where(overlap > 1)
+            for y, x in zip(ys, xs):
+                stacked[:, y, x] = 0
+                stacked[int(winners[y, x]), y, x] = 1
+        out[:, frame] = torch.from_numpy(
+            stacked.reshape(num_subjects, -1) > 0
+        )
+    return out
 
 
 def derive_live_fg_from_class_scores_numpy(

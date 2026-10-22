@@ -18,6 +18,7 @@ from ..layouts import S2VTokenLayout
 from ..parity.trace import trace_tensor
 from ..ref_attn import (
     get_attn_map_with_target,
+    get_attn_map_with_target_animate,
     get_attn_map_with_target_per_head_chunked,
     get_attn_map_with_target_per_head_split,
 )
@@ -577,7 +578,7 @@ def _collect_live_ref_attn(
         elif backend == "wan_animate":
             individual_scores = {}
             for head in valid_heads:
-                individual_scores[head] = get_attn_map_with_target(
+                individual_scores[head] = get_attn_map_with_target_animate(
                     q_for_scores[:, :, head : head + 1],
                     k_for_scores[:, :, head : head + 1],
                     shape,
