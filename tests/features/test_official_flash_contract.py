@@ -13,6 +13,13 @@ from sceneshifter.adapters.base import (
     wrap_audio_attention,
     wrap_cross_attention,
 )
+from sceneshifter.adapters.wan_fun_camera import (
+    install_fun_camera_batched_cfg,
+    install_fun_camera_encoder_offload,
+    install_fun_camera_feature_rmsnorm,
+    install_fun_camera_fp32_layernorm,
+    install_fun_camera_fp32_time_embedding,
+)
 from sceneshifter.masks import downsample_subject_fg
 from sceneshifter.router import FramePromptRouter
 from tests.conftest import canonical_config
@@ -20,6 +27,579 @@ from tests.conftest import canonical_config
 
 class _Attn(nn.Module):
     pass
+
+
+def test_fun_camera_preserves_feature_fp32_time_modulation():
+    class TimeEmbedding(nn.Module):
+        def forward(self, value):
+            return value * 1.25 + 0.125 + value.shape[0] * 1e-4
+
+    class TimeProjection(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.seen_dtype = None
+
+        def forward(self, value):
+            self.seen_dtype = value.dtype
+            return value * 2.0 + value.shape[0] * 1e-4
+
+    class Model:
+        def __init__(self):
+            self.time_embedding = TimeEmbedding()
+            self.time_projection = TimeProjection()
+
+        def forward(self, value):
+            e = self.time_embedding(value).to(torch.bfloat16)
+            return self.time_projection(e)
+
+    value = torch.tensor([[1.0, 2.0], [1.0, 2.0]], dtype=torch.float32)
+    old_e = TimeEmbedding()(value[:1]).to(torch.bfloat16)
+    assert old_e.dtype == torch.bfloat16
+
+    model = Model()
+    install_fun_camera_fp32_time_embedding(model)
+    install_fun_camera_fp32_time_embedding(model)  # idempotent
+    e0 = model.forward(value)
+    expected_e = TimeEmbedding()(value)
+    expected_e0 = TimeProjection()(expected_e)
+    assert model.time_projection.seen_dtype == torch.float32
+    assert e0.dtype == torch.float32
+    torch.testing.assert_close(e0, expected_e0, rtol=0, atol=0)
+
+
+def test_fun_camera_layernorm_keeps_native_output_and_leaves_other_backends(monkeypatch):
+    class WanLayerNorm(nn.LayerNorm):
+        def forward(self, x):
+            return nn.LayerNorm.forward(self, x.float()).type_as(x)
+
+    class WanRMSNorm(nn.Module):
+        def __init__(self, dim):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(dim, dtype=torch.bfloat16))
+
+        def forward(self, x):
+            return x.float().type_as(x) * self.weight
+
+    class Fun(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm1 = WanLayerNorm(4, elementwise_affine=False)
+            self.norm3 = WanLayerNorm(4, elementwise_affine=True)
+            self.norm_q = WanRMSNorm(4)
+            self.blocks = nn.ModuleList([self.norm1])
+
+    class Other(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm1 = WanLayerNorm(4, elementwise_affine=False)
+            self.blocks = nn.ModuleList([self.norm1])
+
+    torch.manual_seed(0)
+    fun = Fun()
+    other = Other()
+    other.norm1.load_state_dict(fun.norm1.state_dict())
+    x = torch.randn(2, 5, 4, dtype=torch.bfloat16)
+    casts = []
+    real_type_as = torch.Tensor.type_as
+
+    def spy(self, other_tensor):
+        casts.append((self.dtype, other_tensor.dtype))
+        return real_type_as(self, other_tensor)
+
+    monkeypatch.setattr(torch.Tensor, "type_as", spy)
+    install_fun_camera_fp32_layernorm(fun)
+    install_fun_camera_fp32_layernorm(fun)  # idempotent
+
+    casts.clear()
+    norm1 = fun.norm1(x)
+    assert casts == []
+    assert fun.norm1.forward.__func__.__name__ == "_feature_wan_layernorm_forward"
+    feature_norm1 = nn.LayerNorm.forward(fun.norm1, x)
+    assert norm1.dtype == feature_norm1.dtype
+    torch.testing.assert_close(norm1, feature_norm1, rtol=0, atol=0)
+
+    casts.clear()
+    norm3 = fun.norm3(x)
+    assert casts == []
+    torch.testing.assert_close(norm3, nn.LayerNorm.forward(fun.norm3, x), rtol=0, atol=0)
+
+    casts.clear()
+    rms = fun.norm_q(x)
+    assert rms.dtype == torch.bfloat16
+    assert casts == [(torch.float32, torch.bfloat16)]
+
+    casts.clear()
+    other_out = other.norm1(x)
+    assert other.norm1.forward.__func__ is WanLayerNorm.forward
+    assert other_out.dtype == torch.bfloat16
+    assert casts == [(torch.float32, torch.bfloat16)]
+    torch.testing.assert_close(
+        other_out,
+        nn.LayerNorm.forward(other.norm1, x.float()).to(dtype=x.dtype),
+        rtol=0,
+        atol=0,
+    )
+
+
+def test_fun_camera_layernorm_requires_modules_on_a_real_transformer():
+    class Model:
+        blocks = []
+
+    with pytest.raises(TypeError, match="WanLayerNorm"):
+        install_fun_camera_fp32_layernorm(Model())
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_fun_camera_layernorm_stays_fp32_under_cuda_autocast():
+    class WanLayerNorm(nn.LayerNorm):
+        def forward(self, x):
+            return nn.LayerNorm.forward(self, x.float()).type_as(x)
+
+    class Fun(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm1 = WanLayerNorm(8, elementwise_affine=False)
+            self.blocks = nn.ModuleList([self.norm1])
+
+    class Other(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm1 = WanLayerNorm(8, elementwise_affine=False)
+
+    fun = Fun().cuda()
+    other = Other().cuda()
+    x = torch.randn(2, 4, 8, device="cuda", dtype=torch.bfloat16)
+    install_fun_camera_fp32_layernorm(fun)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        out = fun.norm1(x)
+        native = nn.LayerNorm.forward(fun.norm1, x)
+        official = other.norm1(x)
+    assert native.dtype == torch.float32
+    assert out.dtype == torch.float32
+    assert official.dtype == torch.bfloat16
+    torch.testing.assert_close(out, native, rtol=0, atol=0)
+
+
+def _feature_rmsnorm(module, x):
+    scale = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + module.eps).to(dtype=x.dtype)
+    return x * scale * module.weight
+
+
+def _official_rmsnorm(module, x):
+    y = x.float()
+    y = y * torch.rsqrt(y.pow(2).mean(dim=-1, keepdim=True) + module.eps)
+    return y.to(dtype=x.dtype) * module.weight
+
+
+def test_fun_camera_rmsnorm_keeps_feature_formula_and_leaves_other_backends(monkeypatch):
+    class WanRMSNorm(nn.Module):
+        def __init__(self, dim, eps=1e-6):
+            super().__init__()
+            self.eps = eps
+            self.weight = nn.Parameter(torch.randn(dim, dtype=torch.bfloat16))
+
+        def forward(self, x):
+            y = x.float()
+            y = y * torch.rsqrt(y.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+            return y.type_as(x) * self.weight
+
+    class WanLayerNorm(nn.LayerNorm):
+        def forward(self, x):
+            return nn.LayerNorm.forward(self, x.float()).type_as(x)
+
+    class Fun(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm_q = WanRMSNorm(4)
+            self.norm_k = WanRMSNorm(4)
+            self.norm1 = WanLayerNorm(4, elementwise_affine=False)
+            self.blocks = nn.ModuleList([self.norm_q, self.norm_k])
+
+    class Other(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm_q = WanRMSNorm(4)
+            self.blocks = nn.ModuleList([self.norm_q])
+
+    torch.manual_seed(0)
+    fun = Fun()
+    other = Other()
+    other.norm_q.load_state_dict(fun.norm_q.state_dict())
+    x = torch.randn(2, 5, 4, dtype=torch.bfloat16)
+    casts = []
+    real_type_as = torch.Tensor.type_as
+
+    def spy(self, other_tensor):
+        casts.append((self.dtype, other_tensor.dtype))
+        return real_type_as(self, other_tensor)
+
+    monkeypatch.setattr(torch.Tensor, "type_as", spy)
+    install_fun_camera_feature_rmsnorm(fun)
+    install_fun_camera_feature_rmsnorm(fun)  # idempotent
+
+    feature_q = _feature_rmsnorm(fun.norm_q, x)
+    official_q = _official_rmsnorm(fun.norm_q, x)
+    assert not torch.equal(feature_q, official_q)
+
+    casts.clear()
+    norm_q = fun.norm_q(x)
+    assert casts == []
+    assert fun.norm_q.forward.__func__.__name__ == "_feature_wan_rmsnorm_forward"
+    assert norm_q.dtype == feature_q.dtype
+    torch.testing.assert_close(norm_q, feature_q, rtol=0, atol=0)
+    assert not torch.equal(norm_q, official_q)
+
+    casts.clear()
+    norm_k = fun.norm_k(x)
+    assert casts == []
+    torch.testing.assert_close(norm_k, _feature_rmsnorm(fun.norm_k, x), rtol=0, atol=0)
+
+    casts.clear()
+    layernorm = fun.norm1(x)
+    assert layernorm.dtype == torch.bfloat16
+    assert casts == [(torch.float32, torch.bfloat16)]
+    assert fun.norm1.forward.__func__ is WanLayerNorm.forward
+
+    casts.clear()
+    other_out = other.norm_q(x)
+    assert other.norm_q.forward.__func__ is WanRMSNorm.forward
+    assert other_out.dtype == torch.bfloat16
+    assert casts
+    torch.testing.assert_close(other_out, _official_rmsnorm(other.norm_q, x), rtol=0, atol=0)
+
+
+def test_fun_camera_rmsnorm_requires_modules_on_a_real_transformer():
+    class Model:
+        blocks = []
+
+    with pytest.raises(TypeError, match="WanRMSNorm"):
+        install_fun_camera_feature_rmsnorm(Model())
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_fun_camera_rmsnorm_matches_feature_under_cuda_autocast():
+    class WanRMSNorm(nn.Module):
+        def __init__(self, dim, eps=1e-6):
+            super().__init__()
+            self.eps = eps
+            self.weight = nn.Parameter(torch.randn(dim, dtype=torch.bfloat16))
+
+        def forward(self, x):
+            y = x.float()
+            y = y * torch.rsqrt(y.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+            return y.type_as(x) * self.weight
+
+    class Fun(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm_q = WanRMSNorm(8)
+            self.blocks = nn.ModuleList([self.norm_q])
+
+    class Other(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm_q = WanRMSNorm(8)
+
+    torch.manual_seed(0)
+    fun = Fun().cuda()
+    other = Other().cuda()
+    other.norm_q.load_state_dict(fun.norm_q.state_dict())
+    x = torch.randn(2, 4, 8, device="cuda", dtype=torch.bfloat16)
+    install_fun_camera_feature_rmsnorm(fun)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        out = fun.norm_q(x)
+        feature = _feature_rmsnorm(fun.norm_q, x)
+        official = other.norm_q(x)
+    assert out.dtype == torch.bfloat16
+    assert feature.dtype == torch.bfloat16
+    assert official.dtype == torch.bfloat16
+    torch.testing.assert_close(out, feature, rtol=0, atol=0)
+    assert not torch.equal(out, official)
+
+
+def test_fun_camera_replaces_serial_cfg_with_feature_batch_order():
+    serial_batches = []
+    batched_batches = []
+
+    def official_serial_cfg(func):
+        def wrapper(self, x, context):
+            half = len(x) // 2
+            cond = func(self, x[half:], context[half:])
+            uncond = func(self, x[:half], context[:half])
+            return torch.cat([uncond, cond])
+
+        return wrapper
+
+    class SerialModel:
+        cfg_skip_ratio = 0
+        current_steps = 0
+        num_inference_steps = 50
+
+        @official_serial_cfg
+        def forward(self, x, context):
+            serial_batches.append(len(x))
+            return context
+
+    x = torch.tensor([[1.0], [2.0]])
+    context = torch.tensor([[-1.0], [1.0]])
+    serial = SerialModel()
+    torch.testing.assert_close(serial.forward(x, context), context)
+    assert serial_batches == [1, 1]
+
+    class BatchedModel:
+        cfg_skip_ratio = 0
+        current_steps = 0
+        num_inference_steps = 50
+
+        @official_serial_cfg
+        def forward(self, x, context):
+            batched_batches.append(len(x))
+            return context
+
+    batched = BatchedModel()
+    install_fun_camera_batched_cfg(batched)
+    install_fun_camera_batched_cfg(batched)  # idempotent
+    torch.testing.assert_close(batched.forward(x, context), context)
+    assert batched_batches == [2]
+
+
+def _official_serial_cfg(func):
+    def wrapper(self, x, context):
+        half = len(x) // 2
+        cond = func(self, x[half:], context[half:])
+        uncond = func(self, x[:half], context[:half])
+        return torch.cat([uncond, cond])
+
+    return wrapper
+
+
+def _serial_cfg_model(batches):
+    class Model:
+        cfg_skip_ratio = 0
+        current_steps = 0
+        num_inference_steps = 50
+        blocks = []
+
+        @_official_serial_cfg
+        def forward(self, x, context):
+            batches.append(len(x))
+            return context
+
+    return Model()
+
+
+def test_fun_camera_batched_cfg_requires_install_on_a_real_transformer():
+    class Model:
+        blocks = []
+
+        def forward(self, x, context):
+            return context
+
+    with pytest.raises(TypeError, match="batched CFG"):
+        install_fun_camera_batched_cfg(Model())
+
+
+def test_fun_camera_batched_cfg_skips_tiny_models_without_serial_cfg():
+    class Tiny:
+        def forward(self, x):
+            return x
+
+    model = Tiny()
+    install_fun_camera_batched_cfg(model)
+    assert model.forward(torch.ones(1)).shape == (1,)
+    assert not getattr(model, "_ss_fun_batched_cfg_installed", False)
+
+
+def test_fun_camera_batched_cfg_installs_under_existing_offload_hook():
+    import functools
+
+    batches = []
+    model = _serial_cfg_model(batches)
+    old_forward = model.forward
+    model._old_forward = old_forward
+
+    def new_forward(module, *args, **kwargs):
+        return module._old_forward(*args, **kwargs)
+
+    hooked = functools.update_wrapper(
+        functools.partial(new_forward, model), old_forward
+    )
+    model.forward = hooked
+    x = torch.tensor([[1.0], [2.0]])
+    context = torch.tensor([[-1.0], [1.0]])
+    torch.testing.assert_close(model.forward(x, context), context)
+    assert batches == [1, 1]
+
+    install_fun_camera_batched_cfg(model)
+    install_fun_camera_batched_cfg(model)  # idempotent
+    assert model.forward is hooked
+    batches.clear()
+    torch.testing.assert_close(model.forward(x, context), context)
+    assert batches == [2]
+
+
+class _CudaResident:
+    """Reports CUDA storage until ``to('cpu')``."""
+
+    def __init__(self):
+        self.device = "cuda"
+        self.cpu_calls = 0
+        self.ran_on = None
+
+    def parameters(self):
+        owner = self
+
+        class _Tensor:
+            @property
+            def is_cuda(self):
+                return owner.device == "cuda"
+
+        yield _Tensor()
+
+    def buffers(self):
+        return iter(())
+
+    def to(self, device, *args, **kwargs):
+        if str(device) == "cpu" or getattr(device, "type", None) == "cpu":
+            self.device = "cpu"
+            self.cpu_calls += 1
+        else:
+            self.device = "cuda"
+        return self
+
+    def forward(self, x):
+        self.to("cuda")
+        self.ran_on = self.device
+        return x
+
+    def encode(self, x):
+        self.to("cuda")
+        self.ran_on = self.device
+        return x
+
+
+def test_fun_camera_batch2_starts_with_encoders_on_cpu():
+    batches = []
+
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = nn.ModuleList()
+            self.cfg_skip_ratio = 0
+            self.current_steps = 0
+            self.num_inference_steps = 50
+            self.marker = nn.Parameter(torch.zeros(1))
+
+        @_official_serial_cfg
+        def forward(self, x, context):
+            batches.append(len(x))
+            return x
+
+    model = Model()
+    install_fun_camera_batched_cfg(model)
+    batched = model.forward
+    hook_calls = {"n": 0}
+
+    def accelerate_forward(*args, **kwargs):
+        hook_calls["n"] += 1
+        return batched(*args, **kwargs)
+
+    model.forward = accelerate_forward
+    text = _CudaResident()
+    clip = _CudaResident()
+    vae = _CudaResident()
+    pipeline = type("Pipe", (), {})()
+    pipeline.transformer = model
+    pipeline.text_encoder = text
+    pipeline.clip_image_encoder = clip
+    pipeline.vae = vae
+    install_fun_camera_encoder_offload(pipeline)
+    install_fun_camera_encoder_offload(pipeline)
+    assert model.forward is accelerate_forward
+
+    x = torch.tensor([[1.0], [2.0]])
+    context = torch.tensor([[-1.0], [1.0]])
+    torch.testing.assert_close(model(x, context=context), x)
+    assert hook_calls["n"] == 1
+    assert batches == [2]
+    assert text.device == "cpu"
+    assert clip.device == "cpu"
+    assert vae.device == "cpu"
+
+    text.device = "cuda"
+    clip.device = "cuda"
+    model._forward_pre_hooks.clear()
+    if hasattr(model, "_forward_pre_hooks_with_kwargs"):
+        model._forward_pre_hooks_with_kwargs.clear()
+    with pytest.raises(RuntimeError, match="still on CUDA"):
+        model(x, context=context)
+
+
+def test_fun_camera_encoder_forward_returns_to_cpu_and_other_backends_skip_guard():
+    text = _CudaResident()
+    clip = _CudaResident()
+    vae = _CudaResident()
+
+    class Tiny(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.marker = nn.Parameter(torch.zeros(1))
+
+        def forward(self, x):
+            return x
+
+    kept = Tiny().forward
+    pipeline = type("Pipe", (), {})()
+    pipeline.transformer = Tiny()
+    pipeline.transformer.forward = kept
+    pipeline.text_encoder = text
+    pipeline.clip_image_encoder = clip
+    pipeline.vae = vae
+    install_fun_camera_encoder_offload(pipeline)
+    assert pipeline.transformer.forward is kept
+
+    text.forward(torch.ones(1))
+    assert text.ran_on == "cuda"
+    assert text.device == "cpu"
+    assert text.cpu_calls == 1
+    clip.forward(torch.ones(1))
+    vae.encode(torch.ones(1))
+    assert clip.device == "cpu"
+    assert vae.device == "cpu"
+
+    plain = Tiny()
+    plain.forward(torch.ones(1))
+    assert not hasattr(plain, "_ss_fun_encoder_guard")
+
+    import types
+
+    previous = text.forward
+
+    def capture(self, value):
+        return previous(value)
+
+    text.device = "cuda"
+    text.forward = types.MethodType(capture, text)
+    text.forward(torch.ones(1))
+    assert text.ran_on == "cuda"
+    assert text.device == "cpu"
+
+
+def test_fun_camera_batched_cfg_installs_through_hook_closure():
+    batches = []
+    model = _serial_cfg_model(batches)
+    original = model.forward
+
+    def hooked(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    model.forward = hooked
+    x = torch.tensor([[1.0], [2.0]])
+    context = torch.tensor([[-1.0], [1.0]])
+    install_fun_camera_batched_cfg(model)
+    assert model.forward is hooked
+    torch.testing.assert_close(model.forward(x, context), context)
+    assert batches == [2]
 
 
 def test_fun_camera_serial_pass_resets_each_timestep():
@@ -658,6 +1238,84 @@ def test_active_segment_routing_fails_without_text_embeddings():
         module(torch.randn(1, 8, 4), torch.randn(1, 6, 4))
 
 
+def test_fun_camera_batched_cfg_splits_text_kv_and_other_backends_do_not():
+    cfg = canonical_config(segment_prompt_start_timestep=3)
+    router = FramePromptRouter(
+        cfg, backend="wan_fun_camera", patch_height=2, patch_width=2
+    )
+    router.set_text_embeddings(
+        [torch.full((1, 3, 4), 10.0), torch.full((1, 3, 4), 20.0)]
+    )
+
+    class Remember(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.shapes = []
+
+        def forward(self, value):
+            self.shapes.append(tuple(value.shape))
+            return value
+
+    class FunCross(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.num_heads = 1
+            self.head_dim = 4
+            self.q = Remember()
+            self.k = Remember()
+            self.v = Remember()
+            self.k_img = Remember()
+            self.v_img = Remember()
+            self.norm_q = nn.Identity()
+            self.norm_k = nn.Identity()
+            self.norm_k_img = nn.Identity()
+            self.o = nn.Identity()
+            self.full_batches = []
+
+        def forward(self, x, context, context_lens=None, dtype=None, t=0):
+            self.full_batches.append(int(context.shape[0]))
+            return x
+
+    fun = FunCross()
+    wrap_cross_attention(fun, router)
+    fun._ss_pass = "uncond"  # Batched CFG is not a pure uncond pass.
+    x = torch.randn(2, 32, 4)
+    context = torch.zeros(2, 260, 4)
+    fun._ss_timestep = 0
+    fun(x, context)
+    assert fun.full_batches == [2]
+    assert fun.k.shapes == []
+
+    fun.full_batches.clear()
+    fun._ss_timestep = 3
+    fun(x, context)
+    assert fun.full_batches == []
+    assert fun.q.shapes == [(2, 32, 4)]
+    assert fun.k.shapes == [(1, 3, 4)] * 4
+    assert fun.v.shapes == [(1, 3, 4)] * 4
+    assert fun.k_img.shapes == [(2, 257, 4)]
+
+    other_router = FramePromptRouter(
+        cfg, backend="multitalk", patch_height=2, patch_width=2
+    )
+    other_router.set_text_embeddings(
+        [torch.full((1, 3, 4), 10.0), torch.full((1, 3, 4), 20.0)]
+    )
+    seen = []
+
+    class Other(nn.Module):
+        def forward(self, x, context, context_lens=None):
+            seen.append(int(context.shape[0]))
+            return x
+
+    other = Other()
+    wrap_cross_attention(other, other_router)
+    other._ss_timestep = 3
+    other._ss_pass = "uncond"
+    other(x, context)
+    assert seen == [2]
+
+
 def test_fun_camera_batched_cfg_routes_only_cond_row():
     cfg = canonical_config()
     router = FramePromptRouter(
@@ -711,6 +1369,143 @@ def test_fun_camera_serialized_cfg_routes_first_call_only():
     assert seen == [10.0, 20.0, -1.0]
 
 
+def _fun_ref_attn_config():
+    cfg = canonical_config()
+    cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[0, 0]],
+        "ref_attn_mask_drop_low_percent": 0.0,
+        "ref_attn_mask_min_component_size": 1,
+        "ref_attn_mask_hole_size": 0,
+        "auto_q_scale": True,
+        "q_scale_bg_only": True,
+    }
+    cfg["background_mask_path"] = None
+    return cfg
+
+
+def _seed_ref_router(backend: str):
+    router = FramePromptRouter(
+        _fun_ref_attn_config(), backend=backend, patch_height=2, patch_width=2
+    )
+    router.ref_loc_max_timesteps = 15
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    return router
+
+
+def test_fun_ref_loc_keeps_selector_heads_separate():
+    cfg = _fun_ref_attn_config()
+    cfg["attention_control_schedule"][0]["params"]["ref_attn_mask_selectors"] = [[0, 0], [0, 1]]
+    router = FramePromptRouter(cfg, backend="wan_fun_camera", patch_height=2, patch_width=2)
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 2, 4)
+    q = torch.zeros(1, 32, 2, 4)
+    q[:, :, 1, :] = 1
+    k = torch.zeros(1, 32, 2, 4)
+    k[:, 0, 1, :] = 4
+    base_adapter._collect_live_ref_attn(router, module, q, k, 3, 0, "cond")
+    first = router._pending_ref_loc_scores[(3, 0, 0)][0]
+    second = router._pending_ref_loc_scores[(3, 0, 1)][0]
+    assert not torch.equal(first, second)
+
+
+def test_fun_ref_loc_mask_keeps_score_ties_in_background():
+    cfg = canonical_config(num_frames=1, frame_splits=[])
+    cfg["attention_control_schedule"][0]["timestep_range"] = [3, 39]
+    cfg["attention_control_schedule"][0]["params"] = {
+        "mask_type": "ref_attn",
+        "ref_attn_mask_selectors": [[37, 32], [37, 35]],
+        "ref_attn_mask_drop_low_percent": 0.0,
+        "ref_attn_mask_min_component_size": 1,
+        "ref_attn_mask_hole_size": 0,
+    }
+    fg = torch.tensor([[[0.50, 0.20, 0.10, 0.00]]])
+    bg = torch.tensor([[0.40, 0.20, 0.30, 0.80]])
+    fun = FramePromptRouter(cfg, backend="wan_fun_camera", patch_height=2, patch_width=2)
+    other = FramePromptRouter(cfg, backend="multitalk", patch_height=2, patch_width=2)
+    for router in (fun, other):
+        router.store_ref_loc_head(3, 37, 32, fg, bg)
+        router.store_ref_loc_head(3, 37, 35, fg.clone(), bg.clone())
+        router._ss_timestep = 3
+    previous = torch.ones(1, 4, dtype=torch.bool)
+    fun.live_bg = previous
+    fun.store_ref_loc_head(3, 37, 32, torch.zeros_like(fg), torch.ones_like(bg))
+    fun.store_ref_loc_head(3, 37, 35, torch.zeros_like(fg), torch.ones_like(bg))
+    fun.complete_denoising_step()
+    assert fun.live_bg is previous
+
+    fun._pending_ref_loc_scores = {}
+    fun._ref_loc_scores = {}
+    fun.live_bg = None
+    fun.store_ref_loc_head(3, 37, 32, fg, bg)
+    fun.store_ref_loc_head(3, 37, 35, fg.clone(), bg.clone())
+    fun.complete_denoising_step()
+    assert fun.live_bg.tolist() == [[False, True, True, True]]
+
+    other.publish_ref_loc_scores()
+    other.refresh_live_mask_from_stored(3, other.active_block(3, None, "cond"))
+    assert bool(other.live_bg[0, 1].item()) is False
+
+
+def test_fun_ref_loc_waits_for_schedule_and_skips_per_layer_refresh():
+    fun = _seed_ref_router("wan_fun_camera")
+    other = _seed_ref_router("multitalk")
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 1, 4)
+    q = torch.randn(1, 32, 1, 4)
+
+    base_adapter._collect_live_ref_attn(fun, module, q, q, 2, 0, "cond")
+    assert fun._pending_ref_loc_scores == {}
+    base_adapter._collect_live_ref_attn(other, module, q, q, 2, 0, "cond")
+    assert (2, 0, 0) in other._pending_ref_loc_scores
+
+    base_adapter._collect_live_ref_attn(fun, module, q, q, 3, 0, "cond")
+    assert (3, 0, 0) in fun._pending_ref_loc_scores
+    assert (3, 0, 0) not in fun._ref_loc_scores
+    base_adapter._collect_live_ref_attn(fun, module, q, q, 40, 0, "cond")
+    assert (40, 0, 0) not in fun._pending_ref_loc_scores
+
+    sentinel = torch.zeros(8, 4, dtype=torch.bool)
+    fun.live_bg = sentinel
+    fun._ref_loc_scores[(0, 0, 0)] = (
+        torch.ones(1, 8, 4),
+        torch.zeros(8, 4),
+    )
+
+    def fake_flash(*args, **kwargs):
+        return args[0]
+
+    module.frame_prompt_router = fun
+    module._ss_timestep = 3
+    module._ss_block_idx = 0
+    module._ss_pass = "cond"
+    scene_masked_official_flash(
+        fake_flash,
+        "flash_attention",
+        module,
+        fun,
+        (q, q.clone(), q.clone()),
+        {"k_lens": torch.tensor([32])},
+    )
+    assert fun.live_bg is sentinel
+
+    fun._ss_timestep = 2
+    fun.complete_denoising_step()
+    assert fun.live_bg is sentinel
+    fun._ss_timestep = 3
+    fun.complete_denoising_step()
+    assert (3, 0, 0) in fun._ref_loc_scores
+    assert fun.live_bg is not None
+
+
 def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):
     cfg = canonical_config()
     cfg["attention_control_schedule"][0]["params"] = {
@@ -723,14 +1518,27 @@ def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):
     router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
     router.subject_fg_masks[0, :, 0] = True
     router.static_bg = ~router.subject_fg_masks.any(0)
-    seen = {}
+    seen = []
 
-    def scores(visual_q, ref_k, shape, targets):
-        seen["batch"] = int(visual_q.shape[0])
-        seen["value"] = float(visual_q[0, 0, 0, 0])
-        return torch.zeros(2, 32)
+    def scores(visual_q, ref_k, shape, targets, *, split_num=2):
+        seen.append(
+            (
+                int(visual_q.shape[0]),
+                int(visual_q.shape[1]),
+                int(visual_q.shape[2]),
+                int(split_num),
+                float(visual_q[0, 0, 0, 0]),
+            )
+        )
+        return torch.zeros(
+            int(targets.shape[0]),
+            int(visual_q.shape[1]),
+            int(visual_q.shape[2]),
+        )
 
-    monkeypatch.setattr(base_adapter, "get_attn_map_with_target", scores)
+    monkeypatch.setattr(
+        base_adapter, "get_attn_map_with_target_per_head_split", scores
+    )
     module = _Attn()
     module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
     module._ss_v_for_ref = torch.zeros(2, 32, 1, 1)
@@ -738,7 +1546,65 @@ def test_fun_camera_ref_loc_collects_cond_cfg_row(monkeypatch):
         [torch.zeros(32, 1, 1), torch.ones(32, 1, 1)], dim=0
     )
     base_adapter._collect_live_ref_attn(router, module, q, q, 0, 0, "cond")
-    assert seen == {"batch": 1, "value": 1.0}
+    # Canonical split is frame 3: 12 tokens, then 20. Cond row only.
+    assert seen == [(1, 12, 1, 2, 1.0), (1, 20, 1, 2, 1.0)]
+
+
+def test_fun_ref_loc_scores_compiled_chunks_per_segment_not_selector_heads(monkeypatch):
+    """The old Fun mask scored the globally rotated query for every segment."""
+    from sceneshifter.rope import rope_apply
+
+    cfg = _fun_ref_attn_config()
+    cfg["attention_control_schedule"][0]["params"]["ref_attn_mask_selectors"] = [
+        [0, 2],
+        [0, 3],
+    ]
+    router = FramePromptRouter(
+        cfg, backend="wan_fun_camera", patch_height=2, patch_width=2
+    )
+    router.subject_fg_masks = torch.zeros(1, 8, 4, dtype=torch.bool)
+    router.subject_fg_masks[0, :, 0] = True
+    router.static_bg = ~router.subject_fg_masks.any(0)
+    seen = []
+
+    def scores(visual_q, ref_k, shape, targets, *, split_num=2):
+        seen.append(visual_q.detach().clone())
+        return torch.zeros(
+            int(targets.shape[0]),
+            int(visual_q.shape[1]),
+            int(visual_q.shape[2]),
+        )
+
+    monkeypatch.setattr(
+        base_adapter, "get_attn_map_with_target_per_head_split", scores
+    )
+    module = _Attn()
+    module._ss_grid_sizes = torch.tensor([[8, 2, 2]])
+    module._ss_v_for_ref = torch.zeros(1, 32, 4, 6, dtype=torch.bfloat16)
+    q = torch.zeros(1, 32, 4, 6, dtype=torch.bfloat16)
+    pre = torch.ones(1, 32, 4, 6, dtype=torch.bfloat16)
+    freqs = torch.randn(16, 3, dtype=torch.float64) + 1j * torch.randn(
+        16, 3, dtype=torch.float64
+    )
+    module._ss_q_pre_rope = pre
+    module._ss_freqs = freqs
+    base_adapter._collect_live_ref_attn(router, module, q, q, 3, 0, "cond")
+    assert [(int(item.shape[1]), int(item.shape[2])) for item in seen] == [
+        (12, 4),
+        (20, 4),
+    ]
+    assert torch.equal(seen[0], q[:, :12])
+    block = router.active_block(3, 0, "cond")
+    scaled = router.apply_q_scale(pre, block)
+    expected = rope_apply(
+        scaled[:, 12:32],
+        torch.tensor([[5, 2, 2]], dtype=torch.long),
+        freqs,
+    ).to(dtype=q.dtype)
+    assert torch.equal(seen[1], expected)
+    assert not torch.equal(seen[1], q[:, 12:32])
+    assert (3, 0, 2) in router._pending_ref_loc_scores
+    assert (3, 0, 3) in router._pending_ref_loc_scores
 
 
 def test_fantasy_ref_loc_scores_union_fg_in_fp32(monkeypatch):

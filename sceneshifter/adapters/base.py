@@ -428,6 +428,106 @@ def _wanted_ref_heads(params: Dict[str, Any], block_idx: Any, num_heads: int) ->
     return wanted
 
 
+def _fun_camera_score_query(
+    router: FramePromptRouter,
+    q_global: torch.Tensor,
+    pre_rope: Optional[torch.Tensor],
+    freqs: Optional[torch.Tensor],
+    block: Optional[Dict[str, Any]],
+    shape,
+    start: int,
+    end: int,
+    segment: int,
+    spatial: int,
+) -> torch.Tensor:
+    """Query segment Feature uses for ref-loc scores.
+
+    Scene 0 is the globally rotated query. Later scenes are scaled from the
+    pre-RoPE query and rotated with temporal indices starting at 0. Attention
+    itself keeps the global RoPE; only the score query is local.
+    """
+    if int(segment) == 0 or not torch.is_tensor(pre_rope) or not torch.is_tensor(freqs):
+        return q_global[:, start:end]
+    pre = pre_rope
+    if int(pre.shape[0]) != int(q_global.shape[0]):
+        pre = pre[-int(q_global.shape[0]) :]
+    scaled = router.apply_q_scale(pre[:, : int(q_global.shape[1])].to(dtype=q_global.dtype), block)
+    if torch.is_tensor(shape):
+        _frames, height, width = (int(shape[0]), int(shape[1]), int(shape[2]))
+    else:
+        _frames, height, width = (int(value) for value in shape)
+    seg_frames = (int(end) - int(start)) // int(spatial)
+    grid = torch.tensor(
+        [[seg_frames, int(height), int(width)]] * int(scaled.shape[0]),
+        device=scaled.device,
+        dtype=torch.long,
+    )
+    local = rope_apply(scaled[:, start:end], grid, freqs, frame_index_scale=1)
+    return local.to(dtype=q_global.dtype)
+
+
+def _fun_camera_ref_loc_scores(
+    router: FramePromptRouter,
+    q_for_scores: torch.Tensor,
+    k_for_scores: torch.Tensor,
+    shape,
+    targets: torch.Tensor,
+    video: int,
+    spatial: int,
+    valid_heads: List[int],
+    pre_rope: Optional[torch.Tensor] = None,
+    freqs: Optional[torch.Tensor] = None,
+    block: Optional[Dict[str, Any]] = None,
+) -> torch.Tensor:
+    """Fun ref-loc maps from compiled 20-head chunks, one query segment at a time.
+
+    Feature scores each segment with ``@torch.compile``d
+    ``calculate_x_ref_attn_map`` (``split_num=2``). New-scene segments use a
+    locally rotated query. Scoring the globally rotated query leaves the
+    selector average almost unchanged and still flips ``fg - bg`` near zero.
+    """
+    pieces = []
+    covered = 0
+    for start, end, segment in router.segment_ranges(spatial):
+        start = max(0, int(start))
+        end = min(int(end), int(video))
+        if end <= start:
+            continue
+        query = _fun_camera_score_query(
+            router,
+            q_for_scores,
+            pre_rope,
+            freqs,
+            block,
+            shape,
+            start,
+            end,
+            int(segment),
+            spatial,
+        )
+        piece = get_attn_map_with_target_per_head_split(
+            query,
+            k_for_scores,
+            shape,
+            targets,
+            split_num=2,
+        )
+        if piece is None:
+            raise RuntimeError(
+                "wan_fun_camera ref-loc chunk returned no scores for "
+                f"tokens [{start}, {end})"
+            )
+        pieces.append(piece)
+        covered += end - start
+    if not pieces or covered != int(video):
+        raise RuntimeError(
+            f"wan_fun_camera ref-loc segments cover {covered} tokens, expected {int(video)}"
+        )
+    full = torch.cat(pieces, dim=1)
+    head_index = torch.tensor(valid_heads, dtype=torch.long, device=full.device)
+    return full.index_select(2, head_index)
+
+
 def _collect_live_ref_attn(
     router: FramePromptRouter,
     module: nn.Module,
@@ -450,9 +550,17 @@ def _collect_live_ref_attn(
         and getattr(router, "backend", None) != "fantasytalking"
     ):
         return
-    max_t = int(getattr(router, "ref_loc_max_timesteps", 0) or 0)
-    if max_t > 0 and int(timestep_idx) >= max_t:
-        return
+    if getattr(router, "backend", None) == "wan_fun_camera":
+        # Feature collects only inside the inclusive schedule window. The
+        # count-style ``step >= ref_loc_max_timesteps`` gate would score steps
+        # before t_min and then apply that mask at the first scheduled step.
+        window = router.ref_attn_timestep_window()
+        if window is None or not (window[0] <= int(timestep_idx) <= window[1]):
+            return
+    else:
+        max_t = int(getattr(router, "ref_loc_max_timesteps", 0) or 0)
+        if max_t > 0 and int(timestep_idx) >= max_t:
+            return
     if block_idx is None:
         return
     params = _ref_attn_schedule_params(router)
@@ -543,8 +651,27 @@ def _collect_live_ref_attn(
     backend = getattr(router, "backend", None)
     individual_scores = None
     split_scores = None
+    fun_head_scores = None
     try:
-        if backend == "multitalk":
+        if backend == "wan_fun_camera":
+            # Compiled split_num=2 chunks per segment. New-scene scores use
+            # local RoPE; attention Q stays on the global rotation.
+            fun_head_scores = _fun_camera_ref_loc_scores(
+                router,
+                q_for_scores,
+                k_for_scores,
+                shape,
+                targets,
+                video,
+                spatial,
+                valid_heads,
+                pre_rope=getattr(module, "_ss_q_pre_rope", None),
+                freqs=getattr(module, "_ss_freqs", None),
+                block=router.active_block(int(timestep_idx), block_idx, pass_type),
+            )
+            scores = None
+            per_head_scores = None
+        elif backend == "multitalk":
             # Temporary: compiled 20-head chunks, and once the scene schedule is
             # on, new-scene score queries use local RoPE. Attention Q stays global.
             pre_rope = getattr(module, "_ss_q_pre_rope", None)
@@ -627,6 +754,7 @@ def _collect_live_ref_attn(
         and per_head_scores is None
         and individual_scores is None
         and split_scores is None
+        and fun_head_scores is None
     ):
         raise RuntimeError(
             f"{router.backend} ref-attn selector L{int(block_idx)} heads "
@@ -677,6 +805,27 @@ def _collect_live_ref_attn(
                 num_subjects, router.num_frames, spatial
             )
             bg = per_head_scores[num_subjects, :, position].reshape(
+                router.num_frames, spatial
+            )
+            router.store_ref_loc_head(
+                timestep_idx, int(block_idx), int(head), fg, bg
+            )
+    elif fun_head_scores is not None:
+        if (
+            int(fun_head_scores.shape[0]) != num_subjects + 1
+            or int(fun_head_scores.shape[1]) != video
+            or int(fun_head_scores.shape[2]) != len(valid_heads)
+        ):
+            raise RuntimeError(
+                f"wan_fun_camera ref-attn selector L{int(block_idx)} score shape "
+                f"{tuple(fun_head_scores.shape)} does not match "
+                f"classes={num_subjects + 1} video={video} heads={len(valid_heads)}"
+            )
+        for position, head in enumerate(valid_heads):
+            fg = fun_head_scores[:num_subjects, :, position].reshape(
+                num_subjects, router.num_frames, spatial
+            )
+            bg = fun_head_scores[num_subjects, :, position].reshape(
                 router.num_frames, spatial
             )
             router.store_ref_loc_head(
@@ -775,16 +924,20 @@ def scene_masked_official_flash(
             **trace_meta,
         )
         return out
-    refresh_idx = int(timestep_idx)
-    if (
-        bool(getattr(router, "freeze_live_mask", False))
-        and getattr(router, "backend", None) == "fantasytalking"
-        and refresh_idx > 0
-    ):
-        # Official Fantasy freezes one selector mask for all passes of step t
-        # from scores collected at t-1, then rebuilds after the step.
-        refresh_idx -= 1
-    router.refresh_live_mask_from_stored(refresh_idx, block)
+    # Fun Camera keeps the mask published after the previous forward.
+    # Rebuilding it on every layer would apply scores from this same step,
+    # or from steps before the schedule, to block 0.
+    if getattr(router, "backend", None) != "wan_fun_camera":
+        refresh_idx = int(timestep_idx)
+        if (
+            bool(getattr(router, "freeze_live_mask", False))
+            and getattr(router, "backend", None) == "fantasytalking"
+            and refresh_idx > 0
+        ):
+            # Official Fantasy freezes one selector mask for all passes of step t
+            # from scores collected at t-1, then rebuilds after the step.
+            refresh_idx -= 1
+        router.refresh_live_mask_from_stored(refresh_idx, block)
     trace_tensor(
         "live_bg",
         getattr(router, "live_bg", None),
@@ -1072,7 +1225,7 @@ def _install_multitalk_prerope_stash(globals_dict: Dict[str, Any]) -> None:
         router = getattr(module, "frame_prompt_router", None) if module is not None else None
         if (
             module is not None
-            and getattr(router, "backend", None) == "multitalk"
+            and getattr(router, "backend", None) in {"multitalk", "wan_fun_camera"}
             and not getattr(module, "_ss_rope_q_saved", False)
         ):
             module._ss_q_pre_rope = x.detach()
@@ -1193,7 +1346,7 @@ def wrap_self_attention(
 
     if patched_official:
 
-        if getattr(router, "backend", None) == "multitalk":
+        if getattr(router, "backend", None) in {"multitalk", "wan_fun_camera"}:
             _install_multitalk_prerope_stash(globals_dict)
 
         def forward(self, *args, **kwargs):
@@ -1355,6 +1508,100 @@ def _multitalk_reference_cross_attention(
     return module.o((text_out + img_out).flatten(2))
 
 
+_FUN_CROSS_CLIP_TOKENS = 257
+
+
+def _fun_camera_has_split_text_projections(module: nn.Module) -> bool:
+    return all(
+        hasattr(module, name)
+        for name in (
+            "q",
+            "k",
+            "v",
+            "o",
+            "norm_q",
+            "norm_k",
+            "k_img",
+            "v_img",
+            "norm_k_img",
+            "num_heads",
+            "head_dim",
+        )
+    )
+
+
+def _pad_cross_tokens(value: torch.Tensor, length: int) -> torch.Tensor:
+    if int(value.shape[1]) == int(length):
+        return value
+    pad = value.new_zeros(
+        value.shape[0], int(length) - int(value.shape[1]), *value.shape[2:]
+    )
+    return torch.cat([value, pad], dim=1)
+
+
+def _fun_camera_batched_cfg_cross_attention(
+    module: nn.Module,
+    x: torch.Tensor,
+    context: torch.Tensor,
+    router: FramePromptRouter,
+    dtype: torch.dtype,
+    attention_fn: Callable,
+) -> torch.Tensor:
+    """Match feature Fun's batched-CFG text projections.
+
+    The model forward stays batch 2. Text K/V do not: each segment projects the
+    negative prompt and that segment prompt as two ``[1, L, C]`` calls.
+    Query and image K/V stay one full-batch call.
+    """
+    batch, _, _channels = x.shape
+    heads = int(module.num_heads)
+    head_dim = int(module.head_dim)
+    q = module.norm_q(module.q(x.to(dtype))).view(batch, -1, heads, head_dim)
+    context_img = context[:, :_FUN_CROSS_CLIP_TOKENS]
+    context_text = context[:, _FUN_CROSS_CLIP_TOKENS:]
+    text_out = torch.zeros_like(q)
+    spatial = int(router.spatial_tokens)
+    for segment, (start, end) in enumerate(router.segment_bounds):
+        text = router.text_embeddings[segment]
+        if not torch.is_tensor(text):
+            raise TypeError("Fun Camera segment text embedding is not a tensor")
+        text = text.to(device=x.device, dtype=dtype)
+        if text.ndim == 2:
+            text = text.unsqueeze(0)
+        text_uncond = context_text[0:1].to(dtype)
+        k_uncond = module.norm_k(module.k(text_uncond)).view(1, -1, heads, head_dim)
+        v_uncond = module.v(text_uncond).view(1, -1, heads, head_dim)
+        k_cond = module.norm_k(module.k(text)).view(1, -1, heads, head_dim)
+        v_cond = module.v(text).view(1, -1, heads, head_dim)
+        length = max(int(k_uncond.shape[1]), int(k_cond.shape[1]))
+        k_segment = torch.cat(
+            [_pad_cross_tokens(k_uncond, length), _pad_cross_tokens(k_cond, length)],
+            dim=0,
+        )
+        v_segment = torch.cat(
+            [_pad_cross_tokens(v_uncond, length), _pad_cross_tokens(v_cond, length)],
+            dim=0,
+        )
+        sl = slice(int(start) * spatial, int(end) * spatial)
+        piece = attention_fn(
+            q[:, sl].to(dtype),
+            k_segment.to(dtype),
+            v_segment.to(dtype),
+            k_lens=None,
+        )
+        if isinstance(piece, tuple):
+            piece = piece[0]
+        text_out[:, sl] = piece.to(dtype=text_out.dtype)
+    k_img = module.norm_k_img(module.k_img(context_img.to(dtype))).view(
+        batch, -1, heads, head_dim
+    )
+    v_img = module.v_img(context_img.to(dtype)).view(batch, -1, heads, head_dim)
+    image = attention_fn(q.to(dtype), k_img.to(dtype), v_img.to(dtype), k_lens=None)
+    if isinstance(image, tuple):
+        image = image[0]
+    return module.o((text_out + image.to(dtype=text_out.dtype)).flatten(2))
+
+
 def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter]) -> nn.Module:
     original = module.forward
     module.frame_prompt_router = router
@@ -1381,14 +1628,50 @@ def wrap_cross_attention(module: nn.Module, router: Optional[FramePromptRouter])
             if context is None:
                 return original(x, *args, **kwargs)
             return original(x, context, *args, **kwargs)
+        fun_batched_text = (
+            getattr(active_router, "backend", None) == "wan_fun_camera"
+            and torch.is_tensor(x)
+            and torch.is_tensor(context)
+            and int(x.shape[0]) == 2
+            and int(context.shape[0]) == 2
+            and int(context.shape[1]) > _FUN_CROSS_CLIP_TOKENS
+            and int(timestep_idx) >= int(active_router.segment_prompt_start_timestep)
+            and _fun_camera_has_split_text_projections(self)
+        )
         if active_router.text_embeddings is None:
-            if active_router.should_use_segment_prompts(int(timestep_idx), str(pass_type)):
+            if fun_batched_text or active_router.should_use_segment_prompts(
+                int(timestep_idx), str(pass_type)
+            ):
                 raise RuntimeError(
                     f"{active_router.backend} segment prompts are active at step "
                     f"{int(timestep_idx)}, but no segment text embeddings were captured"
                 )
             return original(x, context, *args, **kwargs)
         project_router_text_embeddings(active_router)
+        if fun_batched_text:
+            # A batched CFG forward is not an uncond pass. Feature still
+            # projects row 0 and each segment prompt separately.
+            attention_fn = getattr(original, "__globals__", {}).get("attention")
+            if attention_fn is None:
+                attention_fn = getattr(original, "__globals__", {}).get("flash_attention")
+            if attention_fn is None:
+
+                def attention_fn(q, k, v, k_lens=None, **_kwargs):
+                    return torch.zeros_like(q)
+
+            cross_dtype = x.dtype
+            if len(args) > 1 and isinstance(args[1], torch.dtype):
+                cross_dtype = args[1]
+            elif isinstance(kwargs.get("dtype"), torch.dtype):
+                cross_dtype = kwargs["dtype"]
+            return _fun_camera_batched_cfg_cross_attention(
+                self,
+                x,
+                context,
+                active_router,
+                cross_dtype,
+                attention_fn,
+            )
         talking = getattr(active_router, "backend", "") in {"multitalk", "infinitetalk"}
         # Official MultiTalk disables cross-attn routing on uncond (neg prompt stays).
         # Official-main also sets context_lens=None before flash.

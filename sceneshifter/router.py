@@ -25,6 +25,7 @@ from .qscale_scope import (
     new_scene_scale_token_mask,
 )
 from .ref_attn import (
+    derive_fun_live_fg_from_score_diff,
     derive_live_fg_from_class_scores,
     derive_live_fg_from_class_scores_global,
     derive_live_fg_from_class_scores_numpy,
@@ -677,6 +678,58 @@ class FramePromptRouter:
             )
         return live_bg
 
+    def install_fun_ref_loc_mask(
+        self,
+        timestep_idx: int,
+        block: Optional[Dict[str, Any]],
+    ) -> Optional[torch.Tensor]:
+        """Install one Fun mask from averaged selector scores.
+
+        Feature keeps a token in the background when ``fg == bg``, then drops
+        the low tail of ``fg - bg``. The shared argmax path treats that tie as
+        foreground and changes the next step's q-scale.
+        """
+        if block is None:
+            return self.live_bg
+        params = block.get("params") or {}
+        if str(params.get("mask_type", "")) != "ref_attn":
+            return self.live_bg
+        selectors = params.get("ref_attn_mask_selectors") or []
+        fg, bg = self.selector_avg_scores(int(timestep_idx), selectors) if selectors else (None, None)
+        if fg is None or bg is None:
+            return self.live_bg
+        fg_map = fg[0] if fg.ndim == 3 else fg
+        bg_map = bg[0] if bg.ndim == 3 else bg
+        live_fg = derive_fun_live_fg_from_score_diff(
+            fg_map,
+            bg_map,
+            int(self.patch_height),
+            int(self.patch_width),
+            drop_low_percent=float(params.get("ref_attn_mask_drop_low_percent", 10.0)),
+            min_component_size=int(params.get("ref_attn_mask_min_component_size", 20)),
+            hole_size=int(params.get("ref_attn_mask_hole_size", 0) or 0),
+            ext_size=int(params.get("ref_attn_mask_ext_size", 0) or 0),
+        )
+        if live_fg is None or int(live_fg.sum().item()) <= 0:
+            return self.live_bg
+        self.live_subject_fg = live_fg.unsqueeze(0)
+        self.live_bg = ~live_fg
+        return self.live_bg
+
+    def ref_attn_timestep_window(self) -> Optional[Tuple[int, int]]:
+        """Inclusive ``(t_min, t_max)`` over ref-attn schedule blocks."""
+        bounds = []
+        for block in self.schedule or []:
+            params = (block or {}).get("params") or {}
+            if str(params.get("mask_type", "")).strip().lower() != "ref_attn":
+                continue
+            span = block.get("timestep_range")
+            if isinstance(span, (list, tuple)) and len(span) == 2:
+                bounds.append((int(span[0]), int(span[1])))
+        if not bounds:
+            return None
+        return min(lo for lo, _hi in bounds), max(hi for _lo, hi in bounds)
+
     def publish_ref_loc_scores(self) -> None:
         """Make this forward's ref-loc scores visible to the next forward.
 
@@ -694,7 +747,20 @@ class FramePromptRouter:
         self._selector_scores = dict(self._pending_selector_scores)
         self._pending_selector_scores = {}
         self.publish_ref_loc_scores()
-        if self.backend in {"wan_s2v", "wan_animate", "wan_fun_camera"}:
+        if self.backend == "wan_fun_camera":
+            # Feature installs one mask after the forward that collected it.
+            # The next step keeps that mask; this step still used the previous one.
+            finished = getattr(self, "_ss_timestep", None)
+            window = self.ref_attn_timestep_window()
+            if (
+                finished is not None
+                and window is not None
+                and window[0] <= int(finished) <= window[1]
+            ):
+                block = self.active_block(int(finished), None, "cond")
+                self.install_fun_ref_loc_mask(int(finished), block)
+            return
+        if self.backend in {"wan_s2v", "wan_animate"}:
             self.live_bg = None
             self.live_subject_fg = None
 

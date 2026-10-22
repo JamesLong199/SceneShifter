@@ -383,6 +383,39 @@ def test_fun_clip_image_uses_uncropped_cond():
     assert 'meta.get("prompt")' in src
 
 
+def test_fun_official_enables_model_cpu_offload():
+    import inspect
+
+    from sceneshifter.parity import unified
+    from sceneshifter.parity.common import load_parity_config
+
+    src = inspect.getsource(unified.run_fun_official)
+    assert "enable_model_cpu_offload" in src
+    assert 'pipeline.enable_model_cpu_offload(device="cuda")' in src
+    assert 'pipeline.to("cuda")' not in src
+    assert "pipeline.to('cuda')" not in src
+    assert 'pipeline.to(device="cuda")' not in src
+    assert "pipeline.to(device='cuda')" not in src
+    extra = load_parity_config("wan_fun_camera")["reference"]["extra_args"]
+    assert extra[extra.index("--gpu_memory_mode") + 1] == "model_cpu_offload"
+
+
+def test_fun_official_injects_batched_cfg_before_cpu_offload():
+    import inspect
+
+    from sceneshifter.parity import unified
+
+    src = inspect.getsource(unified.run_fun_official)
+    inject_at = src.index('_inject(pipeline.transformer, router, "wan_fun_camera")')
+    offload_at = src.index('pipeline.enable_model_cpu_offload(device="cuda")')
+    release_at = src.index("install_fun_camera_encoder_offload(pipeline)")
+    nograd_at = src.index("with torch.no_grad():")
+    embed_at = src.index("_maybe_set_text_embeddings(router, pipeline, routing)")
+    call_at = src.index("video = pipeline(")
+    assert inject_at < offload_at < release_at < nograd_at < embed_at < call_at
+    assert "transformer.forward =" not in src[offload_at:]
+
+
 def test_fantasy_auto_bucket_handles_null_image_size(tmp_path):
     from PIL import Image
 

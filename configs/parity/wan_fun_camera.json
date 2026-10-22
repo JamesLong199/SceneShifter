@@ -21,7 +21,8 @@
       "--control_camera_txt", "asset/Zoom_Out.txt",
       "--size_bucket", "sceneshifter-480",
       "--seed", "43",
-      "--num_inference_steps", "50"
+      "--num_inference_steps", "50",
+      "--gpu_memory_mode", "model_cpu_offload"
     ]
   },
   "unified": {
@@ -36,7 +37,7 @@
     "guidance_scale": 6.0,
     "shift": 3,
     "input_mask_cover_original": true,
-    "input_mask_cover_head_only": true,
+    "input_mask_cover_head_only": false,
     "negative_prompt": "Twisted body, limb deformities, text captions, comic, static, ugly, error, messy code, blurry, low quality, watermark, subtitles."
   },
   "expected_video_glob": "*.mp4"
