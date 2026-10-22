@@ -3,17 +3,24 @@
 ## Installation
 
 ```bash
+# Clone the repository
 git clone git@github.com:JamesLong199/SceneShifter.git
 cd SceneShifter
-bash scripts/setup_backbones.sh
+
+# Clone the official backbone code
+bash scripts/setup_backbones.sh --backbone multitalk
+
+# Create environment
 bash scripts/setup_envs.sh --family multitalk
 conda activate sceneshifter_multitalk
+
+# Install dependencies
 python -m pip install -e .
 ```
 
-`setup_backbones.sh` clones the official backbone code into `third_party/`.
+`--backbone` selects which official repository to clone. It uses the same names as the demo. `wan_s2v` and `wan_animate` both clone Wan2.2. `all` clones every backbone.
 
-`setup_envs.sh --family` creates one conda environment. The value is the first column below. That environment runs the backbones in the last column.
+`--family` creates the conda environment in that row. The environment runs the backbones in the last column.
 
 | `--family` | Environment to activate | `--backbone` |
 |---|---|---|
@@ -52,12 +59,11 @@ The demo command uses these directories. You do not pass a checkpoint path.
 
 Demo images, audio, and masks are in `examples/demos/`. Each backbone reads its own config in `examples/demos/configs/`.
 
-Choose the GPU with `CUDA_VISIBLE_DEVICES`, activate the matching environment, then run:
+Activate the matching environment, then run:
 
 ```bash
 conda activate sceneshifter_multitalk
-CUDA_VISIBLE_DEVICES=0 python scripts/parity_generate.py \
-  --side unified \
+python scripts/parity_generate.py \
   --backbone multitalk \
   --demo examples/demos \
   --output_root outputs/demos
@@ -65,12 +71,12 @@ CUDA_VISIBLE_DEVICES=0 python scripts/parity_generate.py \
 
 | Backbone | Environment | Command |
 |---|---|---|
-| MultiTalk | `sceneshifter_multitalk` | `CUDA_VISIBLE_DEVICES=0 python scripts/parity_generate.py --side unified --backbone multitalk --demo examples/demos --output_root outputs/demos` |
-| InfiniteTalk | `sceneshifter_multitalk` | `CUDA_VISIBLE_DEVICES=0 python scripts/parity_generate.py --side unified --backbone infinitetalk --demo examples/demos --output_root outputs/demos` |
-| FantasyTalking | `sceneshifter_fantasy` | `CUDA_VISIBLE_DEVICES=0 python scripts/parity_generate.py --side unified --backbone fantasytalking --demo examples/demos --output_root outputs/demos` |
-| Wan2.2 S2V | `sceneshifter_wans2v` | `CUDA_VISIBLE_DEVICES=0 python scripts/parity_generate.py --side unified --backbone wan_s2v --demo examples/demos --output_root outputs/demos` |
-| Wan2.2 Animate | `sceneshifter_wans2v` | `CUDA_VISIBLE_DEVICES=0 python scripts/parity_generate.py --side unified --backbone wan_animate --demo examples/demos --output_root outputs/demos` |
-| Wan Fun camera | `sceneshifter_videoxfun` | `CUDA_VISIBLE_DEVICES=0 python scripts/parity_generate.py --side unified --backbone wan_fun_camera --demo examples/demos --output_root outputs/demos` |
-| HunyuanVideo-Avatar | `sceneshifter_hunyuan` | `CUDA_VISIBLE_DEVICES=0 python scripts/parity_generate.py --side unified --backbone hunyuan_avatar --demo examples/demos --output_root outputs/demos` |
+| MultiTalk | `sceneshifter_multitalk` | `python scripts/parity_generate.py --backbone multitalk --demo examples/demos --output_root outputs/demos` |
+| InfiniteTalk | `sceneshifter_multitalk` | `python scripts/parity_generate.py --backbone infinitetalk --demo examples/demos --output_root outputs/demos` |
+| FantasyTalking | `sceneshifter_fantasy` | `python scripts/parity_generate.py --backbone fantasytalking --demo examples/demos --output_root outputs/demos` |
+| Wan2.2 S2V | `sceneshifter_wans2v` | `python scripts/parity_generate.py --backbone wan_s2v --demo examples/demos --output_root outputs/demos` |
+| Wan2.2 Animate | `sceneshifter_wans2v` | `python scripts/parity_generate.py --backbone wan_animate --demo examples/demos --output_root outputs/demos` |
+| Wan Fun camera | `sceneshifter_videoxfun` | `python scripts/parity_generate.py --backbone wan_fun_camera --demo examples/demos --output_root outputs/demos` |
+| HunyuanVideo-Avatar | `sceneshifter_hunyuan` | `python scripts/parity_generate.py --backbone hunyuan_avatar --demo examples/demos --output_root outputs/demos` |
 
 The video is written to `outputs/demos/<backbone>/unified/videos/`.

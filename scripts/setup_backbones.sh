@@ -9,23 +9,48 @@ usage() {
   cat <<EOF
 Clone official backbone mains into third_party/ (read-only after clone).
 
-Usage: $0 [--with-reference] [--only NAME]
+Usage: $0 [--backbone NAME] [--with-reference] [--only NAME]
 
+  --backbone NAME   official code for one demo backbone:
+                      multitalk, infinitetalk, fantasytalking,
+                      wan_s2v, wan_animate, wan_fun_camera,
+                      hunyuan_avatar, or all
+                    wan_s2v and wan_animate share the Wan2.2 checkout
+  --only NAME       clone one lockfile section (multitalk, wan2.2, ...)
   --with-reference  also clone jameslong199 feature branches into tests/reference/
-  --only NAME       clone a single official backbone (multitalk, wan2.2, ...)
 EOF
 }
 
 ONLY=""
+BACKBONE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --with-reference) WITH_REFERENCE=1 ;;
     --only) ONLY="$2"; shift ;;
+    --backbone) BACKBONE="$2"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 1 ;;
   esac
   shift
 done
+
+if [[ -n "$BACKBONE" && -n "$ONLY" ]]; then
+  echo "pass only one of --backbone and --only" >&2
+  exit 1
+fi
+
+if [[ -n "$BACKBONE" ]]; then
+  case "$BACKBONE" in
+    multitalk) ONLY="multitalk" ;;
+    infinitetalk) ONLY="infinitetalk" ;;
+    fantasytalking) ONLY="fantasy-talking" ;;
+    wan_s2v|wan_animate) ONLY="wan2.2" ;;
+    wan_fun_camera) ONLY="videox-fun" ;;
+    hunyuan_avatar) ONLY="hunyuanvideo-avatar" ;;
+    all) ONLY="" ;;
+    *) echo "unknown backbone $BACKBONE" >&2; usage; exit 1 ;;
+  esac
+fi
 
 clone_locked() {
   local section="$1"

@@ -132,13 +132,18 @@ def run_reference(cfg: Dict[str, Any], out_dir: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="SceneShifter gpu40 parity generate")
-    parser.add_argument("--side", required=True, choices=["reference", "unified"])
+    parser.add_argument(
+        "--side",
+        default="unified",
+        choices=["reference", "unified"],
+        help="unified runs SceneShifter. reference is the internal comparison checkout.",
+    )
     parser.add_argument("--backbone", required=True, choices=BACKBONES)
     parser.add_argument("--output_root", default=None)
     parser.add_argument(
         "--demo",
         default=None,
-        help="Shared demo directory (examples/demos). Select the GPU with CUDA_VISIBLE_DEVICES.",
+        help="Shared demo directory (examples/demos).",
     )
     parser.add_argument("--trace_dir", default=None)
     parser.add_argument("--trace_steps", default="0")
