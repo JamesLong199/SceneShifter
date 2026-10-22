@@ -1312,14 +1312,15 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
         scheduler=scheduler,
         clip_image_encoder=clip,
     )
-    # model_cpu_offload keeps UMT5 and CLIP off the GPU during the DiT loop.
-    # model_full_load leaves them resident and OOMs on a shared 80 GB card.
-    pipeline.enable_model_cpu_offload(device="cuda")
     sample_size = list(unified.get("sample_size") or [640, 640])
     router = _create_router(
         cfg, routing, patch_h=max(1, int(sample_size[0]) // 16), patch_w=max(1, int(sample_size[1]) // 16)
     )
+    # Install while transformer.forward is still the official serial CFG
+    # decorator. Offload then wraps that forward and keeps UMT5, CLIP, and VAE
+    # off the GPU during the DiT loop. Full load leaves them resident and OOMs.
     _inject(pipeline.transformer, router, "wan_fun_camera")
+    pipeline.enable_model_cpu_offload(device="cuda")
     from sceneshifter.adapters.base import attach_text_projector
 
     attach_text_projector(router, pipeline.transformer)

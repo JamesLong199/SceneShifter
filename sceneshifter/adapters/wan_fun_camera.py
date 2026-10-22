@@ -46,15 +46,96 @@ def _closed_over_function(value: Any, name: str) -> Optional[Any]:
     return closure[freevars.index(name)].cell_contents
 
 
+def _unwrap_callable(value: Any) -> Any:
+    """Follow bound methods and ``functools.partial`` to the underlying function."""
+    current = value
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        inner = getattr(current, "__func__", None)
+        if callable(inner) and inner is not current:
+            current = inner
+            continue
+        partial_func = getattr(current, "func", None)
+        if (
+            callable(partial_func)
+            and partial_func is not current
+            and not hasattr(current, "__code__")
+        ):
+            current = partial_func
+            continue
+        return current
+    return value
+
+
+def _is_serial_cfg_wrapper(value: Any) -> bool:
+    if not callable(value):
+        return False
+    return callable(_closed_over_function(value, "func"))
+
+
+def _bind_like(template: Any, function: Any) -> Any:
+    owner = getattr(template, "__self__", None)
+    if owner is None:
+        return function
+    return types.MethodType(function, owner)
+
+
+def _closure_cells(value: Any) -> List[Any]:
+    function = _unwrap_callable(value)
+    closure = getattr(function, "__closure__", None)
+    if not closure:
+        return []
+    return list(closure)
+
+
+def _serial_cfg_targets(model: Any, forward: Any) -> List[Any]:
+    """Slots whose current callable is the official serial CFG decorator.
+
+    When ``forward`` itself is that decorator, replace it. When an offload hook
+    already replaced ``forward``, patch ``_old_forward`` or the hook closure so
+    the hook stays in front and calls the batch-2 forward.
+    """
+    if _is_serial_cfg_wrapper(forward):
+        return [(forward, lambda new: setattr(model, "forward", new))]
+
+    targets = []
+    old = getattr(model, "_old_forward", None)
+    if _is_serial_cfg_wrapper(old):
+        targets.append((old, lambda new: setattr(model, "_old_forward", new)))
+    if forward is None:
+        return targets
+    for cell in _closure_cells(forward):
+        try:
+            contents = cell.cell_contents
+        except ValueError:
+            continue
+        if not _is_serial_cfg_wrapper(contents):
+            continue
+
+        def _set_cell(new, cell=cell):
+            cell.cell_contents = new
+
+        targets.append((contents, _set_cell))
+    return targets
+
+
 def install_fun_camera_batched_cfg(model: Any) -> None:
     """Replace locked official serial CFG with the feature batch-2 contract."""
     if getattr(model, "_ss_fun_batched_cfg_installed", False):
         return
-    decorated = getattr(model, "forward", None)
-    feature_forward = _closed_over_function(decorated, "func")
-    if not callable(feature_forward):
-        # Tiny test models and future official models may already be batched.
+    forward = getattr(model, "forward", None)
+    targets = _serial_cfg_targets(model, forward)
+    if not targets:
+        # Tiny test models have no ``blocks`` and may already be batched.
+        # A real Wan Fun transformer always has ``blocks``; skipping it leaves
+        # the locked official decorator on two batch-1 forwards.
+        if hasattr(model, "blocks"):
+            raise TypeError("Wan Fun Camera batched CFG forward was not installed")
         return
+    feature_forward = _closed_over_function(targets[0][0], "func")
+    if not callable(feature_forward):
+        raise TypeError("Wan Fun Camera batched CFG forward was not installed")
 
     def batched_cfg_forward(self, x, *args, **kwargs):
         batch = len(x)
@@ -84,7 +165,8 @@ def install_fun_camera_batched_cfg(model: Any) -> None:
         result = feature_forward(self, x, *args, **kwargs)
         return torch.cat([result, result], dim=0) if skip_cfg else result
 
-    model.forward = types.MethodType(batched_cfg_forward, model)
+    for template, setter in targets:
+        setter(_bind_like(template, batched_cfg_forward))
     model._ss_fun_batched_cfg_installed = True
 
 

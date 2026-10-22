@@ -362,6 +362,98 @@ def test_fun_camera_replaces_serial_cfg_with_feature_batch_order():
     assert batched_batches == [2]
 
 
+def _official_serial_cfg(func):
+    def wrapper(self, x, context):
+        half = len(x) // 2
+        cond = func(self, x[half:], context[half:])
+        uncond = func(self, x[:half], context[:half])
+        return torch.cat([uncond, cond])
+
+    return wrapper
+
+
+def _serial_cfg_model(batches):
+    class Model:
+        cfg_skip_ratio = 0
+        current_steps = 0
+        num_inference_steps = 50
+        blocks = []
+
+        @_official_serial_cfg
+        def forward(self, x, context):
+            batches.append(len(x))
+            return context
+
+    return Model()
+
+
+def test_fun_camera_batched_cfg_requires_install_on_a_real_transformer():
+    class Model:
+        blocks = []
+
+        def forward(self, x, context):
+            return context
+
+    with pytest.raises(TypeError, match="batched CFG"):
+        install_fun_camera_batched_cfg(Model())
+
+
+def test_fun_camera_batched_cfg_skips_tiny_models_without_serial_cfg():
+    class Tiny:
+        def forward(self, x):
+            return x
+
+    model = Tiny()
+    install_fun_camera_batched_cfg(model)
+    assert model.forward(torch.ones(1)).shape == (1,)
+    assert not getattr(model, "_ss_fun_batched_cfg_installed", False)
+
+
+def test_fun_camera_batched_cfg_installs_under_existing_offload_hook():
+    import functools
+
+    batches = []
+    model = _serial_cfg_model(batches)
+    old_forward = model.forward
+    model._old_forward = old_forward
+
+    def new_forward(module, *args, **kwargs):
+        return module._old_forward(*args, **kwargs)
+
+    hooked = functools.update_wrapper(
+        functools.partial(new_forward, model), old_forward
+    )
+    model.forward = hooked
+    x = torch.tensor([[1.0], [2.0]])
+    context = torch.tensor([[-1.0], [1.0]])
+    torch.testing.assert_close(model.forward(x, context), context)
+    assert batches == [1, 1]
+
+    install_fun_camera_batched_cfg(model)
+    install_fun_camera_batched_cfg(model)  # idempotent
+    assert model.forward is hooked
+    batches.clear()
+    torch.testing.assert_close(model.forward(x, context), context)
+    assert batches == [2]
+
+
+def test_fun_camera_batched_cfg_installs_through_hook_closure():
+    batches = []
+    model = _serial_cfg_model(batches)
+    original = model.forward
+
+    def hooked(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    model.forward = hooked
+    x = torch.tensor([[1.0], [2.0]])
+    context = torch.tensor([[-1.0], [1.0]])
+    install_fun_camera_batched_cfg(model)
+    assert model.forward is hooked
+    torch.testing.assert_close(model.forward(x, context), context)
+    assert batches == [2]
+
+
 def test_fun_camera_serial_pass_resets_each_timestep():
     module = _Attn()
     assert _fun_camera_serial_pass(module, 3) == "cond"
