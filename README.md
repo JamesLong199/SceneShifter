@@ -12,7 +12,7 @@ bash scripts/setup_backbones.sh --backbone [BACKBONE] # e.g. multitalk
 
 # Create environment
 bash scripts/setup_envs.sh --family [BACKBONE] # e.g. multitalk
-conda activate sceneshifter_multitalk
+conda activate [ENV] # e.g. sceneshifter_multitalk
 
 # Install dependencies
 python -m pip install -e .
@@ -52,8 +52,6 @@ python scripts/download_checkpoints.py --backbone [BACKBONE] # e.g. multitalk
 | `wan_animate` | `weights/wan_animate` |
 | `wan_fun_camera` | `weights/wan_fun_camera` |
 | `hunyuan_avatar` | `weights/hunyuan_avatar` |
-
-The demo command uses these directories. You do not pass a checkpoint path.
 
 ## Demo
 
