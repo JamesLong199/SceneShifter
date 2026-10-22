@@ -408,7 +408,10 @@ def test_fun_official_injects_batched_cfg_before_cpu_offload():
     src = inspect.getsource(unified.run_fun_official)
     inject_at = src.index('_inject(pipeline.transformer, router, "wan_fun_camera")')
     offload_at = src.index('pipeline.enable_model_cpu_offload(device="cuda")')
-    assert inject_at < offload_at
+    release_at = src.index("install_fun_camera_encoder_offload(pipeline)")
+    embed_at = src.index("_maybe_set_text_embeddings(router, pipeline, routing)")
+    assert inject_at < offload_at < release_at < embed_at
+    assert "transformer.forward =" not in src[offload_at:]
 
 
 def test_fantasy_auto_bucket_handles_null_image_size(tmp_path):

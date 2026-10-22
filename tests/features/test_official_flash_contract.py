@@ -15,6 +15,7 @@ from sceneshifter.adapters.base import (
 )
 from sceneshifter.adapters.wan_fun_camera import (
     install_fun_camera_batched_cfg,
+    install_fun_camera_encoder_offload,
     install_fun_camera_feature_rmsnorm,
     install_fun_camera_fp32_layernorm,
     install_fun_camera_fp32_time_embedding,
@@ -435,6 +436,153 @@ def test_fun_camera_batched_cfg_installs_under_existing_offload_hook():
     batches.clear()
     torch.testing.assert_close(model.forward(x, context), context)
     assert batches == [2]
+
+
+class _CudaResident:
+    """Reports CUDA storage until ``to('cpu')``."""
+
+    def __init__(self):
+        self.device = "cuda"
+        self.cpu_calls = 0
+        self.ran_on = None
+
+    def parameters(self):
+        owner = self
+
+        class _Tensor:
+            @property
+            def is_cuda(self):
+                return owner.device == "cuda"
+
+        yield _Tensor()
+
+    def buffers(self):
+        return iter(())
+
+    def to(self, device, *args, **kwargs):
+        if str(device) == "cpu" or getattr(device, "type", None) == "cpu":
+            self.device = "cpu"
+            self.cpu_calls += 1
+        else:
+            self.device = "cuda"
+        return self
+
+    def forward(self, x):
+        self.to("cuda")
+        self.ran_on = self.device
+        return x
+
+    def encode(self, x):
+        self.to("cuda")
+        self.ran_on = self.device
+        return x
+
+
+def test_fun_camera_batch2_starts_with_encoders_on_cpu():
+    batches = []
+
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = nn.ModuleList()
+            self.cfg_skip_ratio = 0
+            self.current_steps = 0
+            self.num_inference_steps = 50
+            self.marker = nn.Parameter(torch.zeros(1))
+
+        @_official_serial_cfg
+        def forward(self, x, context):
+            batches.append(len(x))
+            return x
+
+    model = Model()
+    install_fun_camera_batched_cfg(model)
+    batched = model.forward
+    hook_calls = {"n": 0}
+
+    def accelerate_forward(*args, **kwargs):
+        hook_calls["n"] += 1
+        return batched(*args, **kwargs)
+
+    model.forward = accelerate_forward
+    text = _CudaResident()
+    clip = _CudaResident()
+    vae = _CudaResident()
+    pipeline = type("Pipe", (), {})()
+    pipeline.transformer = model
+    pipeline.text_encoder = text
+    pipeline.clip_image_encoder = clip
+    pipeline.vae = vae
+    install_fun_camera_encoder_offload(pipeline)
+    install_fun_camera_encoder_offload(pipeline)
+    assert model.forward is accelerate_forward
+
+    x = torch.tensor([[1.0], [2.0]])
+    context = torch.tensor([[-1.0], [1.0]])
+    torch.testing.assert_close(model(x, context=context), x)
+    assert hook_calls["n"] == 1
+    assert batches == [2]
+    assert text.device == "cpu"
+    assert clip.device == "cpu"
+    assert vae.device == "cpu"
+
+    text.device = "cuda"
+    clip.device = "cuda"
+    model._forward_pre_hooks.clear()
+    if hasattr(model, "_forward_pre_hooks_with_kwargs"):
+        model._forward_pre_hooks_with_kwargs.clear()
+    with pytest.raises(RuntimeError, match="still on CUDA"):
+        model(x, context=context)
+
+
+def test_fun_camera_encoder_forward_returns_to_cpu_and_other_backends_skip_guard():
+    text = _CudaResident()
+    clip = _CudaResident()
+    vae = _CudaResident()
+
+    class Tiny(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.marker = nn.Parameter(torch.zeros(1))
+
+        def forward(self, x):
+            return x
+
+    kept = Tiny().forward
+    pipeline = type("Pipe", (), {})()
+    pipeline.transformer = Tiny()
+    pipeline.transformer.forward = kept
+    pipeline.text_encoder = text
+    pipeline.clip_image_encoder = clip
+    pipeline.vae = vae
+    install_fun_camera_encoder_offload(pipeline)
+    assert pipeline.transformer.forward is kept
+
+    text.forward(torch.ones(1))
+    assert text.ran_on == "cuda"
+    assert text.device == "cpu"
+    assert text.cpu_calls == 1
+    clip.forward(torch.ones(1))
+    vae.encode(torch.ones(1))
+    assert clip.device == "cpu"
+    assert vae.device == "cpu"
+
+    plain = Tiny()
+    plain.forward(torch.ones(1))
+    assert not hasattr(plain, "_ss_fun_encoder_guard")
+
+    import types
+
+    previous = text.forward
+
+    def capture(self, value):
+        return previous(value)
+
+    text.device = "cuda"
+    text.forward = types.MethodType(capture, text)
+    text.forward(torch.ones(1))
+    assert text.ran_on == "cuda"
+    assert text.device == "cpu"
 
 
 def test_fun_camera_batched_cfg_installs_through_hook_closure():

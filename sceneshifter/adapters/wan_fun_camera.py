@@ -138,6 +138,7 @@ def install_fun_camera_batched_cfg(model: Any) -> None:
         raise TypeError("Wan Fun Camera batched CFG forward was not installed")
 
     def batched_cfg_forward(self, x, *args, **kwargs):
+        _reject_cuda_fun_encoders(self)
         batch = len(x)
         skip_cfg = (
             batch >= 2
@@ -168,6 +169,109 @@ def install_fun_camera_batched_cfg(model: Any) -> None:
     for template, setter in targets:
         setter(_bind_like(template, batched_cfg_forward))
     model._ss_fun_batched_cfg_installed = True
+
+
+def _cuda_tensors(module: Any) -> List[Any]:
+    tensors: List[Any] = []
+    parameters = getattr(module, "parameters", None)
+    buffers = getattr(module, "buffers", None)
+    if callable(parameters):
+        tensors.extend(parameters())
+    if callable(buffers):
+        tensors.extend(buffers())
+    return [tensor for tensor in tensors if bool(getattr(tensor, "is_cuda", False))]
+
+
+def module_has_cuda_storage(module: Any) -> bool:
+    if module is None:
+        return False
+    return bool(_cuda_tensors(module))
+
+
+def release_module_to_cpu(module: Any) -> bool:
+    """Move one module to CPU when any parameter or buffer is still on CUDA."""
+    if not module_has_cuda_storage(module):
+        return False
+    module.to("cpu")
+    return True
+
+
+def release_fun_camera_encoders(*modules: Any) -> None:
+    """Return Fun Camera UMT5, CLIP, and VAE weights to CPU after they run."""
+    moved = False
+    for module in modules:
+        moved = release_module_to_cpu(module) or moved
+    if moved and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _reject_cuda_fun_encoders(model: Any) -> None:
+    """Fail the batch-2 forward if UMT5 or CLIP is still resident on CUDA."""
+    guard = getattr(model, "_ss_fun_encoder_guard", None)
+    if not guard:
+        return
+    names = ("text_encoder", "clip_image_encoder", "vae")
+    resident = [
+        name
+        for name, module in zip(names, guard)
+        if module_has_cuda_storage(module)
+    ]
+    if resident:
+        raise RuntimeError(
+            "Wan Fun Camera encoders still on CUDA at batch-2 forward: "
+            + ", ".join(resident)
+        )
+
+
+def _wrap_leave_cpu(module: Any, method_name: str) -> None:
+    """Call the hooked method, then leave the module on CPU."""
+    if module is None:
+        return
+    flag = f"_ss_fun_leave_{method_name}"
+    if getattr(module, flag, False):
+        return
+    original = getattr(module, method_name, None)
+    if not callable(original):
+        return
+
+    def wrapped(*args, **kwargs):
+        try:
+            return original(*args, **kwargs)
+        finally:
+            release_fun_camera_encoders(module)
+
+    setattr(module, method_name, wrapped)
+    setattr(module, flag, True)
+
+
+def install_fun_camera_encoder_offload(pipeline: Any) -> None:
+    """Keep UMT5, CLIP, and VAE off the GPU except while their own forward runs.
+
+    The accelerate hook on ``transformer.forward`` stays in place. A pre-hook
+    releases the encoders before that forward, and each encoder method returns
+    its weights to CPU when it finishes.
+    """
+    transformer = getattr(pipeline, "transformer", None)
+    if transformer is None or not hasattr(transformer, "register_forward_pre_hook"):
+        raise TypeError("Wan Fun Camera transformer cannot register the encoder offload hook")
+    text = getattr(pipeline, "text_encoder", None)
+    clip = getattr(pipeline, "clip_image_encoder", None)
+    vae = getattr(pipeline, "vae", None)
+    transformer._ss_fun_encoder_guard = (text, clip, vae)
+    _wrap_leave_cpu(text, "forward")
+    _wrap_leave_cpu(clip, "forward")
+    for method_name in ("encode", "decode", "forward"):
+        _wrap_leave_cpu(vae, method_name)
+    if getattr(transformer, "_ss_fun_encoder_release_hook", False):
+        return
+
+    def _release_before_dit(module, args, kwargs):
+        guard = getattr(module, "_ss_fun_encoder_guard", ())
+        release_fun_camera_encoders(*guard)
+        return args, kwargs
+
+    transformer.register_forward_pre_hook(_release_before_dit, with_kwargs=True)
+    transformer._ss_fun_encoder_release_hook = True
 
 
 def install_fun_camera_fp32_time_embedding(model: Any) -> None:

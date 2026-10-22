@@ -1316,15 +1316,25 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     router = _create_router(
         cfg, routing, patch_h=max(1, int(sample_size[0]) // 16), patch_w=max(1, int(sample_size[1]) // 16)
     )
-    # Install while transformer.forward is still the official serial CFG
-    # decorator. Offload then wraps that forward and keeps UMT5, CLIP, and VAE
-    # off the GPU during the DiT loop. Full load leaves them resident and OOMs.
+    # Install batch-2 CFG while transformer.forward is still the official
+    # serial decorator. The offload hook then wraps that forward and must stay
+    # the callable pipeline() uses. Encoder methods return to CPU when they
+    # finish, and each DiT entry forces UMT5, CLIP, and VAE off the GPU.
     _inject(pipeline.transformer, router, "wan_fun_camera")
     pipeline.enable_model_cpu_offload(device="cuda")
+    from sceneshifter.adapters.wan_fun_camera import (
+        install_fun_camera_encoder_offload,
+        release_fun_camera_encoders,
+    )
+
+    install_fun_camera_encoder_offload(pipeline)
     from sceneshifter.adapters.base import attach_text_projector
 
     attach_text_projector(router, pipeline.transformer)
     _maybe_set_text_embeddings(router, pipeline, routing)
+    release_fun_camera_encoders(
+        pipeline.text_encoder, pipeline.clip_image_encoder, pipeline.vae
+    )
 
     image = _resolve_media(root, meta.get("cond_image"))
     camera_txt = unified.get("control_camera_txt", "asset/Zoom_Out.txt")
