@@ -60,6 +60,29 @@ def test_every_parity_config_locks_both_revisions():
 
 
 @pytest.mark.parity
+def test_demo_config_points_at_the_shipped_example(tmp_path):
+    from sceneshifter.parity.common import apply_demo_config
+
+    demo = tmp_path / "wan_animate"
+    (demo / "process").mkdir(parents=True)
+    (demo / "metadata.json").write_text("{}\n")
+    (demo / "demo.json").write_text(
+        json.dumps(
+            {
+                "sample_id": "012",
+                "unified": {"src_root_path": "process", "base_seed": 4},
+            }
+        )
+    )
+    cfg = load_parity_config("wan_animate")
+    updated = apply_demo_config(cfg, demo)
+    assert updated["sample_id"] == "012"
+    assert updated["dataset_root"] == str(demo.resolve())
+    assert updated["metadata"] == str((demo / "metadata.json").resolve())
+    assert updated["unified"]["src_root_path"] == str((demo / "process").resolve())
+    assert updated["unified"]["ckpt_dir"] == cfg["unified"]["ckpt_dir"]
+
+
 def test_fun_camera_092_uses_whole_person_cover_without_head_mask():
     cfg = load_parity_config("wan_fun_camera")
     routing = canonical_config()

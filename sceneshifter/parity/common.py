@@ -27,6 +27,40 @@ def load_parity_config(backbone: str) -> Dict[str, Any]:
     return json.loads(path.read_text())
 
 
+_DEMO_PATH_KEYS = {"src_root_path", "control_camera_txt"}
+
+
+def apply_demo_config(cfg: Dict[str, Any], demo: str | Path) -> Dict[str, Any]:
+    """Point a parity config at one self-contained examples/demos directory."""
+    demo_dir = Path(demo)
+    if not demo_dir.is_absolute():
+        demo_dir = repo_root() / demo_dir
+    demo_dir = demo_dir.resolve()
+    metadata = demo_dir / "metadata.json"
+    if not metadata.is_file():
+        raise FileNotFoundError(f"demo metadata missing: {metadata}")
+    updated = dict(cfg)
+    updated["dataset_root"] = str(demo_dir)
+    updated["metadata"] = str(metadata)
+    demo_cfg = demo_dir / "demo.json"
+    if demo_cfg.is_file():
+        extra = json.loads(demo_cfg.read_text())
+        if extra.get("sample_id"):
+            updated["sample_id"] = str(extra["sample_id"])
+        unified = dict(updated.get("unified") or {})
+        for key, value in (extra.get("unified") or {}).items():
+            if (
+                key in _DEMO_PATH_KEYS
+                and isinstance(value, str)
+                and value
+                and not Path(value).is_absolute()
+            ):
+                value = str((demo_dir / value).resolve())
+            unified[key] = value
+        updated["unified"] = unified
+    return updated
+
+
 def output_root(override: Optional[str] = None) -> Path:
     return Path(override or os.environ.get("SCENESHIFTER_PARITY_ROOT") or PARITY_ROOT_DEFAULT)
 

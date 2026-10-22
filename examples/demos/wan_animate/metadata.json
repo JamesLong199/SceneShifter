@@ -1,0 +1,123 @@
+{
+  "frame_prompt_routing": {
+    "enabled": true,
+    "num_frames": 21,
+    "frame_splits": [
+      12,
+      17
+    ],
+    "segment_prompts": [
+      "The man walks along an aisle in indoor supermarket, speaking to the camera.",
+      "The man walks along the front rows in large indoor conference hall, rows of conference chairs facing forward toward a stage and screen, speaking to the camera.",
+      "The man walks along the open area in indoor parking garage, painted concrete pillars, marked lanes, and open space, speaking to the camera."
+    ],
+    "segment_prompt_start_timestep": 0,
+    "attention_control_schedule": [
+      {
+        "timestep_range": [
+          0,
+          19
+        ],
+        "self_attention_mask": [
+          [
+            [
+              1,
+              "full"
+            ],
+            [
+              1,
+              "fg"
+            ],
+            [
+              1,
+              "fg"
+            ]
+          ],
+          {
+            "fg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ],
+              [
+                1,
+                "fg"
+              ]
+            ],
+            "bg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ],
+              [
+                1,
+                "fg"
+              ]
+            ]
+          },
+          {
+            "fg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ]
+            ],
+            "bg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ]
+            ]
+          }
+        ],
+        "params": {
+          "mask_type": "ref_attn",
+          "apply_on_uncond_passes": true,
+          "ref_attn_mask_drop_low_percent": 10.0,
+          "ref_attn_mask_min_component_size": 20,
+          "ref_attn_mask_hole_size": 0,
+          "auto_q_scale": true,
+          "q_scale_bg_only": true,
+          "ref_attn_mask_selectors": [
+            [
+              37,
+              32
+            ],
+            [
+              37,
+              35
+            ]
+          ],
+          "ref_attn_mask_aggregate": "avg_score"
+        }
+      }
+    ],
+    "background_mask_path": {
+      "0": "masks/012_standing_2_3_0_bg_mask.npy"
+    }
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "frame_prompt_routing": {
+    "enabled": true,
+    "num_frames": 21,
+    "frame_splits": [
+      5
+    ],
+    "segment_prompts": [
+      "The woman walks along the sidewalk in outdoor urban street, speaking to the camera.",
+      "The woman walks along the study area in quiet library study area, bookshelves and a study desk area with reading lamps, speaking to the camera."
+    ],
+    "segment_prompt_start_timestep": 3,
+    "attention_control_schedule": [
+      {
+        "timestep_range": [
+          3,
+          39
+        ],
+        "self_attention_mask": [
+          [
+            [
+              1,
+              "full"
+            ],
+            [
+              1,
+              "fg"
+            ]
+          ],
+          {
+            "fg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ]
+            ],
+            "bg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ]
+            ]
+          }
+        ],
+        "params": {
+          "mask_type": "ref_attn",
+          "apply_on_uncond_passes": true,
+          "ref_attn_mask_drop_low_percent": 10.0,
+          "ref_attn_mask_min_component_size": 20,
+          "ref_attn_mask_hole_size": 0,
+          "auto_q_scale": true,
+          "q_scale_bg_only": true,
+          "ref_attn_mask_selectors": [
+            [
+              37,
+              32
+            ],
+            [
+              37,
+              35
+            ]
+          ],
+          "ref_attn_mask_aggregate": "avg_score",
+          "ref_attn_mask_ext_size": 0
+        }
+      }
+    ],
+    "background_mask_path": {
+      "0": "background_masks/023_standing_3_4_0_bg_mask.npy"
+    },
+    "head_mask_path": {
+      "0": "background_masks_head_aug/023_standing_3_4_0_head_bg_mask.npy"
+    },
+    "input_mask_cover_original": false,
+    "input_mask_cover_head_only": false
+  },
+  "cond_image": "v12_final/023_standing_3_4_0.jpg",
+  "cond_audio": {
+    "person1": "SceneShifter_audios/RD_Radio45_000.wav"
+  },
+  "prompt": "The woman walks along the sidewalk in outdoor urban street, speaking to the camera."
+}

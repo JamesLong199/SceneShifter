@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from sceneshifter.parity.common import (  # noqa: E402
+    apply_demo_config,
     conda_python,
     find_videos,
     git_head,
@@ -128,12 +129,19 @@ def main() -> int:
     parser.add_argument("--backbone", required=True, choices=BACKBONES)
     parser.add_argument("--gpu", type=int, required=True)
     parser.add_argument("--output_root", default=None)
+    parser.add_argument(
+        "--demo",
+        default=None,
+        help="Self-contained demo directory (examples/demos/<backbone>)",
+    )
     parser.add_argument("--trace_dir", default=None)
     parser.add_argument("--trace_steps", default="0")
     parser.add_argument("--trace_layers", default="0,37")
     args = parser.parse_args()
 
     cfg = load_parity_config(args.backbone)
+    if args.demo:
+        cfg = apply_demo_config(cfg, args.demo)
     out_dir = side_dir(args.backbone, args.side, root=args.output_root)
     (out_dir / "videos").mkdir(parents=True, exist_ok=True)
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)

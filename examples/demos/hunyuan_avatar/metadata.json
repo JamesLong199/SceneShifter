@@ -1,0 +1,120 @@
+{
+  "frame_prompt_routing": {
+    "enabled": true,
+    "num_frames": 33,
+    "frame_splits": [
+      11,
+      22
+    ],
+    "segment_prompts": [
+      "The woman stands up and walks along the aisle in independent bookstore, speaking to the camera.",
+      "The woman walks along the side aisle in university classroom, rows of desks and chairs facing a whiteboard, speaking to the camera.",
+      "The woman walks along the studio floor in indoor recording studio, soundproof walls, studio monitors, and a microphone stand near the subject, speaking to the camera."
+    ],
+    "segment_prompt_start_timestep": 0,
+    "attention_control_schedule": [
+      {
+        "timestep_range": [
+          0,
+          49
+        ],
+        "self_attention_mask": [
+          [
+            [
+              1,
+              "full"
+            ],
+            [
+              1,
+              "fg"
+            ],
+            [
+              1,
+              "fg"
+            ]
+          ],
+          {
+            "fg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ],
+              [
+                1,
+                "fg"
+              ]
+            ],
+            "bg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ],
+              [
+                1,
+                "fg"
+              ]
+            ]
+          },
+          {
+            "fg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ]
+            ],
+            "bg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ]
+            ]
+          }
+        ],
+        "params": {
+          "mask_type": "ref_attn",
+          "apply_on_uncond_passes": true,
+          "ref_attn_mask_layer": 19,
+          "ref_attn_mask_head": 22,
+          "ref_attn_mask_drop_low_percent": 10.0,
+          "ref_attn_mask_min_component_size": 20,
+          "ref_attn_mask_hole_size": 0,
+          "auto_q_scale": true,
+          "q_scale_bg_only": false
+        }
+      }
+    ],
+    "background_mask_path": {
+      "0": "background_masks/005_sitting_3_2_0_bg_mask.npy"
+    }
+  },
+  "cond_image": "v12_final/005_sitting_3_2_0.jpg",
+  "cond_audio": {
+    "person1": "SceneShifter_audios/RD_Radio1_000.wav"
+  },
+  "prompt": "The woman stands up and walks along the aisle in independent bookstore, speaking to the camera.",
+  "common_prompt": "The woman speaks to the camera."
+}
