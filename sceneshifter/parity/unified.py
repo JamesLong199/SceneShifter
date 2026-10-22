@@ -1331,42 +1331,45 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
     from sceneshifter.adapters.base import attach_text_projector
 
     attach_text_projector(router, pipeline.transformer)
-    _maybe_set_text_embeddings(router, pipeline, routing)
-    release_fun_camera_encoders(
-        pipeline.text_encoder, pipeline.clip_image_encoder, pipeline.vae
-    )
+    # Reference Fun runs under no_grad. A grad graph keeps the CUDA weight
+    # storages alive after .cpu(), so UMT5 and CLIP stay allocated through DiT.
+    with torch.no_grad():
+        _maybe_set_text_embeddings(router, pipeline, routing)
+        release_fun_camera_encoders(
+            pipeline.text_encoder, pipeline.clip_image_encoder, pipeline.vae
+        )
 
-    image = _resolve_media(root, meta.get("cond_image"))
-    camera_txt = unified.get("control_camera_txt", "asset/Zoom_Out.txt")
-    if not Path(camera_txt).is_absolute():
-        camera_txt = str(official / camera_txt)
-    video_length = int(unified.get("video_length", 81))
-    control = process_pose_file(camera_txt, sample_size[1], sample_size[0])
-    control = control[:video_length].permute([3, 0, 1, 2]).unsqueeze(0)
-    # Official 092: VAE start uses resize_mode=centercrop; CLIP gets the raw cond image.
-    cropped = _fun_center_crop_pil(image, sample_size)
-    start = get_image_latent(cropped, sample_size=sample_size)
-    clip_image = Image.open(image).convert("RGB")
-    generator = torch.Generator(device="cuda").manual_seed(int(unified.get("seed", 43)))
-    prompt = meta.get("prompt") or (routing.get("segment_prompts") or [""])[0]
-    negative = unified.get(
-        "negative_prompt",
-        "Twisted body, limb deformities, text captions, comic, static, ugly, error, messy code, blurry, low quality, watermark, subtitles.",
-    )
-    video = pipeline(
-        prompt,
-        num_frames=video_length,
-        negative_prompt=negative,
-        height=sample_size[0],
-        width=sample_size[1],
-        generator=generator,
-        guidance_scale=float(unified.get("guidance_scale", 6.0)),
-        num_inference_steps=int(unified.get("num_inference_steps", 50)),
-        start_image=start,
-        control_camera_video=control,
-        clip_image=clip_image,
-        shift=int(unified.get("shift", 3)),
-    ).videos
+        image = _resolve_media(root, meta.get("cond_image"))
+        camera_txt = unified.get("control_camera_txt", "asset/Zoom_Out.txt")
+        if not Path(camera_txt).is_absolute():
+            camera_txt = str(official / camera_txt)
+        video_length = int(unified.get("video_length", 81))
+        control = process_pose_file(camera_txt, sample_size[1], sample_size[0])
+        control = control[:video_length].permute([3, 0, 1, 2]).unsqueeze(0)
+        # Official 092: VAE start uses resize_mode=centercrop; CLIP gets the raw cond image.
+        cropped = _fun_center_crop_pil(image, sample_size)
+        start = get_image_latent(cropped, sample_size=sample_size)
+        clip_image = Image.open(image).convert("RGB")
+        generator = torch.Generator(device="cuda").manual_seed(int(unified.get("seed", 43)))
+        prompt = meta.get("prompt") or (routing.get("segment_prompts") or [""])[0]
+        negative = unified.get(
+            "negative_prompt",
+            "Twisted body, limb deformities, text captions, comic, static, ugly, error, messy code, blurry, low quality, watermark, subtitles.",
+        )
+        video = pipeline(
+            prompt,
+            num_frames=video_length,
+            negative_prompt=negative,
+            height=sample_size[0],
+            width=sample_size[1],
+            generator=generator,
+            guidance_scale=float(unified.get("guidance_scale", 6.0)),
+            num_inference_steps=int(unified.get("num_inference_steps", 50)),
+            start_image=start,
+            control_camera_video=control,
+            clip_image=clip_image,
+            shift=int(unified.get("shift", 3)),
+        ).videos
     save = out_dir / "videos" / f"{cfg['sample_id']}_sceneshifter.mp4"
     save.parent.mkdir(parents=True, exist_ok=True)
     save_videos_grid(video, str(save), fps=16)

@@ -409,8 +409,10 @@ def test_fun_official_injects_batched_cfg_before_cpu_offload():
     inject_at = src.index('_inject(pipeline.transformer, router, "wan_fun_camera")')
     offload_at = src.index('pipeline.enable_model_cpu_offload(device="cuda")')
     release_at = src.index("install_fun_camera_encoder_offload(pipeline)")
+    nograd_at = src.index("with torch.no_grad():")
     embed_at = src.index("_maybe_set_text_embeddings(router, pipeline, routing)")
-    assert inject_at < offload_at < release_at < embed_at
+    call_at = src.index("video = pipeline(")
+    assert inject_at < offload_at < release_at < nograd_at < embed_at < call_at
     assert "transformer.forward =" not in src[offload_at:]
 
 
