@@ -1,40 +1,12 @@
 {
   "backbone": "multitalk",
-  "sample_id": "032",
-  "conda_env": "sceneshifter_multitalk",
-  "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
-  "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/032_metadata.json",
-  "official_run_dir": "/data/home/jzlong/data/SceneShifter_dataset/results/sceneshifter_t3_at20_refl37h32_l37h35_trans2_ctx1_ttr30_39_q_scale_bg_only",
+  "sample_id": "023",
   "locks": {
-    "reference_feature_sha": "41926136802c3731677dc4a6a472cefa2258eba9",
-    "reference_base_sha": "c02957791e8b3faba905b96f95c60df18f40d956",
     "official_sha": "c1ad84009b99ed36c97ab18e4517ca5f98692438"
-  },
-  "reference": {
-    "repo": "/data/home/jzlong/codes/MultiTalk",
-    "branch": "transition",
-    "script": "batch_generate_sceneshifter.py",
-    "extra_args": [
-      "--metadata_format", "sceneshifter",
-      "--metadata_glob", "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/*_metadata.json",
-      "--ckpt_dir", "/mnt/whuscs/ljz/MultiTalk/weights/Wan2.1-I2V-14B-480P",
-      "--wav2vec_dir", "/mnt/whuscs/ljz/MultiTalk/weights/chinese-wav2vec2-base",
-      "--base_seed", "43",
-      "--audio_start_timestep", "20",
-      "--ref_loc_max_timesteps", "15",
-      "--len_trans", "2",
-      "--len_trans_context", "1",
-      "--trans_timestep_range", "30", "39",
-      "--ids", "032",
-      "--overwrite",
-      "--offload_model", "True"
-    ]
   },
   "unified": {
     "official_root": "third_party/multitalk",
     "official_script": "generate_multitalk.py",
-    "ckpt_dir": "/mnt/whuscs/ljz/MultiTalk/weights/Wan2.1-I2V-14B-480P",
-    "wav2vec_dir": "/mnt/whuscs/ljz/MultiTalk/weights/chinese-wav2vec2-base",
     "base_seed": 43,
     "audio_start_timestep": 20,
     "ref_loc_max_timesteps": 15,
@@ -42,5 +14,5 @@
     "len_trans_context": 1,
     "trans_timestep_range": [30, 39]
   },
-  "expected_video_glob": "*032*.mp4"
+  "expected_video_glob": "*023*.mp4"
 }

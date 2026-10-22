@@ -59,12 +59,12 @@ Demo images, audio, and masks are in `examples/demos/`. Each backbone reads its 
 
 | Backbone | Command |
 |---|---|
-| MultiTalk | `conda activate sceneshifter_multitalk && python scripts/parity_generate.py --backbone multitalk --demo examples/demos --output_root outputs/demos` |
-| InfiniteTalk | `conda activate sceneshifter_multitalk && python scripts/parity_generate.py --backbone infinitetalk --demo examples/demos --output_root outputs/demos` |
-| FantasyTalking | `conda activate sceneshifter_fantasy && python scripts/parity_generate.py --backbone fantasytalking --demo examples/demos --output_root outputs/demos` |
-| Wan2.2 S2V | `conda activate sceneshifter_wans2v && python scripts/parity_generate.py --backbone wan_s2v --demo examples/demos --output_root outputs/demos` |
-| Wan2.2 Animate | `conda activate sceneshifter_wans2v && python scripts/parity_generate.py --backbone wan_animate --demo examples/demos --output_root outputs/demos` |
-| Wan Fun camera | `conda activate sceneshifter_videoxfun && python scripts/parity_generate.py --backbone wan_fun_camera --demo examples/demos --output_root outputs/demos` |
-| HunyuanVideo-Avatar | `conda activate sceneshifter_hunyuan && python scripts/parity_generate.py --backbone hunyuan_avatar --demo examples/demos --output_root outputs/demos` |
+| MultiTalk | `conda activate sceneshifter_multitalk && python scripts/generate.py --backbone multitalk --demo examples/demos --output_root outputs/demos` |
+| InfiniteTalk | `conda activate sceneshifter_multitalk && python scripts/generate.py --backbone infinitetalk --demo examples/demos --output_root outputs/demos` |
+| FantasyTalking | `conda activate sceneshifter_fantasy && python scripts/generate.py --backbone fantasytalking --demo examples/demos --output_root outputs/demos` |
+| Wan2.2 S2V | `conda activate sceneshifter_wans2v && python scripts/generate.py --backbone wan_s2v --demo examples/demos --output_root outputs/demos` |
+| Wan2.2 Animate | `conda activate sceneshifter_wans2v && python scripts/generate.py --backbone wan_animate --demo examples/demos --output_root outputs/demos` |
+| Wan Fun camera | `conda activate sceneshifter_videoxfun && python scripts/generate.py --backbone wan_fun_camera --demo examples/demos --output_root outputs/demos` |
+| HunyuanVideo-Avatar | `conda activate sceneshifter_hunyuan && python scripts/generate.py --backbone hunyuan_avatar --demo examples/demos --output_root outputs/demos` |
 
-The video is written to `outputs/demos/<backbone>/unified/videos/`.
+The video is written to `outputs/demos/<backbone>/videos/`.

@@ -1,35 +1,12 @@
 {
   "backbone": "wan_fun_camera",
   "sample_id": "092",
-  "conda_env": "sceneshifter_videoxfun",
-  "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
-  "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/092_metadata.json",
-  "official_run_dir": "/data/home/jzlong/codes/VideoX-Fun/samples/sceneshifter_092_fun_camera",
   "locks": {
-    "reference_feature_sha": "cac278fab8b5a75f4d42d357a78c557e9912450d",
-    "reference_base_sha": "dca24fb653e20e3f910a704e0b19d960b137a603",
     "official_sha": "968f0e2192ba4c7a12868bf36d73260d135424ca"
-  },
-  "reference": {
-    "repo": "/data/home/jzlong/codes/VideoX-Fun",
-    "branch": "fun_camera_sceneshifter",
-    "script": "examples/wan2.1_fun/predict_v2v_control_camera_sceneshifter.py",
-    "extra_args": [
-      "--metadata", "/data/home/jzlong/data/SceneShifter_dataset/ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/092_metadata.json",
-      "--dataset_root", "/data/home/jzlong/data/SceneShifter_dataset",
-      "--ckpt", "/mnt/whuscs/ljz/Wan2.1-Fun-V1.1-14B-Control-Camera",
-      "--control_camera_txt", "asset/Zoom_Out.txt",
-      "--size_bucket", "sceneshifter-480",
-      "--seed", "43",
-      "--num_inference_steps", "50",
-      "--gpu_memory_mode", "model_cpu_offload"
-    ]
   },
   "unified": {
     "official_root": "third_party/videox-fun",
     "official_script": "examples/wan2.1_fun/predict_v2v_control_camera.py",
-    "ckpt": "/mnt/whuscs/ljz/Wan2.1-Fun-V1.1-14B-Control-Camera",
-    "control_camera_txt": "asset/Zoom_Out.txt",
     "seed": 43,
     "num_inference_steps": 50,
     "sample_size": [640, 640],

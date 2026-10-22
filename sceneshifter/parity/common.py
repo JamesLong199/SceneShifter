@@ -1,19 +1,11 @@
-"""Shared paths and metadata helpers for parity jobs."""
+"""Shared paths and metadata helpers for demos."""
 
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-
-PARITY_ROOT_DEFAULT = (
-    "/data/home/jzlong/data/SceneShifter_dataset/results/sceneshifter_unified_parity_0918"
-)
-DATASET_ROOT_DEFAULT = "/data/home/jzlong/data/SceneShifter_dataset"
-CONDA_SH = "/data/home/jzlong/miniconda3/etc/profile.d/conda.sh"
+from typing import Any, Dict, List
 
 
 def repo_root() -> Path:
@@ -107,23 +99,13 @@ def apply_demo_config(cfg: Dict[str, Any], demo: str | Path) -> Dict[str, Any]:
     return updated
 
 
-def output_root(override: Optional[str] = None) -> Path:
-    return Path(override or os.environ.get("SCENESHIFTER_PARITY_ROOT") or PARITY_ROOT_DEFAULT)
-
-
-def side_dir(backbone: str, side: str, *, root: Optional[str] = None) -> Path:
-    path = output_root(root) / backbone / side
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def resolve_metadata(cfg: Dict[str, Any]) -> Path:
     meta = Path(cfg["metadata"])
     if meta.is_absolute():
         return meta
     if str(meta).startswith("configs/"):
         return repo_root() / meta
-    return Path(cfg.get("dataset_root") or DATASET_ROOT_DEFAULT) / meta
+    return Path(cfg.get("dataset_root") or (repo_root() / "examples" / "demos")) / meta
 
 
 def git_head(repo: str) -> str:
@@ -137,13 +119,6 @@ def git_head(repo: str) -> str:
 
 def write_run_args(out_dir: Path, payload: Dict[str, Any]) -> None:
     (out_dir / "run_args.json").write_text(json.dumps(payload, indent=2, default=str))
-
-
-def conda_python(env_name: str) -> str:
-    candidate = Path("/data/home/jzlong/miniconda3/envs") / env_name / "bin" / "python"
-    if candidate.is_file():
-        return str(candidate)
-    return "python"
 
 
 def find_videos(directory: Path, glob_pat: str) -> List[Path]:

@@ -1,45 +1,12 @@
 {
   "backbone": "infinitetalk",
-  "sample_id": "032",
-  "conda_env": "sceneshifter_multitalk",
-  "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
-  "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/032_metadata.json",
-  "official_run_dir": "/data/home/jzlong/codes/InfiniteTalk/results/infinitetalk_sceneshifter_t3_at20_refl37h32_l37h35_trans2_ctx1_qscale_bg_only_0729",
+  "sample_id": "159",
   "locks": {
-    "reference_feature_sha": "57aa134cd0cf49a31f375b0e35d5da0bbdb75bc2",
-    "reference_base_sha": "ee217d04d4fb1af002d2cef3f60c8dd62c4812ef",
     "official_sha": "50aa0a94184315407a991ae804d9b58d6d311ba8"
-  },
-  "reference": {
-    "repo": "/data/home/jzlong/codes/InfiniteTalk",
-    "branch": "exp",
-    "script": "batch_generate_sceneshifter.py",
-    "extra_args": [
-      "--metadata_format", "sceneshifter",
-      "--metadata_glob", "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/*_metadata.json",
-      "--ckpt_dir", "/mnt/whuscs/ljz/MultiTalk/weights/Wan2.1-I2V-14B-480P",
-      "--infinitetalk_dir", "/mnt/whuscs/ljz/InfiniteTalk/multi/infinitetalk.safetensors",
-      "--wav2vec_dir", "/mnt/whuscs/ljz/MultiTalk/weights/chinese-wav2vec2-base",
-      "--size", "infinitetalk-480",
-      "--mode", "clip",
-      "--frame_num", "81",
-      "--base_seed", "43",
-      "--audio_start_timestep", "20",
-      "--ref_loc_max_timesteps", "15",
-      "--len_trans", "2",
-      "--len_trans_context", "1",
-      "--trans_timestep_range", "30", "39",
-      "--ids", "032",
-      "--overwrite",
-      "--offload_model", "True"
-    ]
   },
   "unified": {
     "official_root": "third_party/infinitetalk",
     "official_script": "generate_infinitetalk.py",
-    "ckpt_dir": "/mnt/whuscs/ljz/MultiTalk/weights/Wan2.1-I2V-14B-480P",
-    "infinitetalk_dir": "/mnt/whuscs/ljz/InfiniteTalk/multi/infinitetalk.safetensors",
-    "wav2vec_dir": "/mnt/whuscs/ljz/MultiTalk/weights/chinese-wav2vec2-base",
     "size": "infinitetalk-480",
     "mode": "clip",
     "frame_num": 81,
@@ -50,5 +17,5 @@
     "len_trans_context": 1,
     "trans_timestep_range": [30, 39]
   },
-  "expected_video_glob": "*032*.mp4"
+  "expected_video_glob": "*159*.mp4"
 }

@@ -1,1 +1,1 @@
-"""GPU parity helpers: official-run configs vs unified inject."""
+"""Helpers for running SceneShifter demos on official backbone checkouts."""

@@ -1,39 +1,12 @@
 {
   "backbone": "hunyuan_avatar",
-  "sample_id": "032",
-  "conda_env": "sceneshifter_hunyuan",
-  "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
-  "metadata": "ablations/metadata_jsons_v2_mmdit/032_metadata.json",
-  "official_run_dir": "/data/home/jzlong/codes/HunyuanVideo-Avatar/results/hunyuan_sceneshifter_mmdit_refattn_l19h22_t0_qscale_trans2_ctx2_t2049_0803",
+  "sample_id": "005",
   "locks": {
-    "reference_feature_sha": "59d465b26735d89c44c1156033605fd8322849b9",
-    "reference_base_sha": "2a337d0b48019ba4184942a76b2802abf3266d7d",
     "official_sha": "8c31d0d489df8418fa36a2a709ebdf0b47c7bf06"
-  },
-  "reference": {
-    "repo": "/data/home/jzlong/codes/HunyuanVideo-Avatar",
-    "branch": "exp",
-    "script": "scripts/batch_generate_sceneshifter.py",
-    "extra_args": [
-      "--dataset-root", "/data/home/jzlong/data/SceneShifter_dataset",
-      "--metadata-glob", "ablations/metadata_jsons_v2_mmdit/*_metadata.json",
-      "--model-base", "/mnt/whuscs/ljz/HunyuanVideo-Avatar/weights",
-      "--base-seed", "43",
-      "--infer-steps", "50",
-      "--cfg-scale", "7.5",
-      "--len_trans", "2",
-      "--len_trans_context", "2",
-      "--trans_timestep_range", "20", "49",
-      "--ids", "032",
-      "--overwrite",
-      "--use-fp8"
-    ]
   },
   "unified": {
     "official_root": "third_party/hunyuanvideo-avatar",
     "official_script": "hymm_sp/sample_gpu_poor.py",
-    "model_base": "/mnt/whuscs/ljz/HunyuanVideo-Avatar/weights",
-    "ckpt": "/mnt/whuscs/ljz/HunyuanVideo-Avatar/weights/ckpts/hunyuan-video-t2v-720p/transformers/mp_rank_00_model_states_fp8.pt",
     "base_seed": 43,
     "infer_steps": 50,
     "flow_shift": 5.0,
@@ -43,5 +16,5 @@
     "len_trans_context": 2,
     "trans_timestep_range": [20, 49]
   },
-  "expected_video_glob": "*032*.mp4"
+  "expected_video_glob": "*005*.mp4"
 }
