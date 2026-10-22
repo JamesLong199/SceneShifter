@@ -1,7 +1,7 @@
 {
   "backbone": "wan_s2v",
   "sample_id": "032",
-  "conda_env": "wans2v",
+  "conda_env": "sceneshifter_wans2v",
   "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
   "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/032_metadata.json",
   "official_run_dir": "/data/home/jzlong/data/SceneShifter_dataset/results/wans2v_sceneshifter_q09_ref3_trans2_1_t30_39_seed43_0803",

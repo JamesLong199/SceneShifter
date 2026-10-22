@@ -75,7 +75,15 @@ def _require_locked_sha(cfg: Dict[str, Any], side: str, repo: str) -> str:
     return actual
 
 
-def _reference_command(cfg: Dict[str, Any], out_dir: Path, gpu: int) -> List[str]:
+def _physical_device() -> str:
+    raw = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not raw:
+        return "0"
+    first = raw.split(",")[0].strip()
+    return first or "0"
+
+
+def _reference_command(cfg: Dict[str, Any], out_dir: Path) -> List[str]:
     ref = cfg["reference"]
     python = conda_python(cfg["conda_env"])
     script = str(Path(ref["repo"]) / ref["script"])
@@ -85,7 +93,7 @@ def _reference_command(cfg: Dict[str, Any], out_dir: Path, gpu: int) -> List[str
     # Most batch workers call torch.cuda.set_device() inside the inherited
     # CUDA_VISIBLE_DEVICES mapping, so they need ordinal 0. Fantasy's worker
     # overwrites CUDA_VISIBLE_DEVICES itself and therefore needs the physical id.
-    visible_gpu = str(gpu) if backbone == "fantasytalking" else "0"
+    visible_gpu = _physical_device() if backbone == "fantasytalking" else "0"
     if backbone == "hunyuan_avatar":
         cmd += [
             "--dataset-root", cfg["dataset_root"],
@@ -110,14 +118,13 @@ def _reference_command(cfg: Dict[str, Any], out_dir: Path, gpu: int) -> List[str
     return cmd
 
 
-def run_reference(cfg: Dict[str, Any], out_dir: Path, gpu: int) -> None:
+def run_reference(cfg: Dict[str, Any], out_dir: Path) -> None:
     ref = cfg["reference"]
     repo = ref["repo"]
     _checkout(repo, ref["branch"])
-    cmd = _reference_command(cfg, out_dir, gpu)
+    cmd = _reference_command(cfg, out_dir)
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(gpu)
-    env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
     print("[parity-reference]", " ".join(cmd), flush=True)
     subprocess.check_call(cmd, cwd=repo, env=env)
@@ -127,12 +134,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="SceneShifter gpu40 parity generate")
     parser.add_argument("--side", required=True, choices=["reference", "unified"])
     parser.add_argument("--backbone", required=True, choices=BACKBONES)
-    parser.add_argument("--gpu", type=int, required=True)
     parser.add_argument("--output_root", default=None)
     parser.add_argument(
         "--demo",
         default=None,
-        help="Self-contained demo directory (examples/demos/<backbone>)",
+        help="Shared demo directory (examples/demos). Select the GPU with CUDA_VISIBLE_DEVICES.",
     )
     parser.add_argument("--trace_dir", default=None)
     parser.add_argument("--trace_steps", default="0")
@@ -144,8 +150,7 @@ def main() -> int:
         cfg = apply_demo_config(cfg, args.demo)
     out_dir = side_dir(args.backbone, args.side, root=args.output_root)
     (out_dir / "videos").mkdir(parents=True, exist_ok=True)
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     # Media helpers are subprocesses. Running an env's Python directly does not
     # activate that env, so make its ffmpeg/ffprobe binaries discoverable.
@@ -158,7 +163,7 @@ def main() -> int:
     payload: Dict[str, Any] = {
         "side": args.side,
         "backbone": args.backbone,
-        "gpu": args.gpu,
+        "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "sample_id": cfg["sample_id"],
         "sceneshifter_sha": git_head(str(repo_root())),
@@ -175,9 +180,9 @@ def main() -> int:
             cfg, "reference", cfg["reference"]["repo"]
         )
         payload["checkout_branch"] = cfg["reference"]["branch"]
-        payload["resolved_argv"] = _reference_command(cfg, out_dir, args.gpu)
+        payload["resolved_argv"] = _reference_command(cfg, out_dir)
         write_run_args(out_dir, payload)
-        run_reference(cfg, out_dir, args.gpu)
+        run_reference(cfg, out_dir)
     else:
         official = resolve_official_root(cfg)
         payload["official_root"] = str(official)

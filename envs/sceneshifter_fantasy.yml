@@ -1,4 +1,4 @@
-name: ss-fantasytalking
+name: sceneshifter_fantasy
 channels:
   - defaults
 dependencies:
@@ -8,4 +8,5 @@ dependencies:
       - torch>=2.0.0
       - transformers==4.46.2
       - cupy-cuda12x
+      - huggingface_hub
       - pytest>=8.0

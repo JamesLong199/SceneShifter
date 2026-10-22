@@ -1,7 +1,7 @@
 {
   "backbone": "infinitetalk",
   "sample_id": "032",
-  "conda_env": "infinitetalk",
+  "conda_env": "sceneshifter_multitalk",
   "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
   "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/032_metadata.json",
   "official_run_dir": "/data/home/jzlong/codes/InfiniteTalk/results/infinitetalk_sceneshifter_t3_at20_refl37h32_l37h35_trans2_ctx1_qscale_bg_only_0729",

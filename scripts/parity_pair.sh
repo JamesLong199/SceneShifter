@@ -15,6 +15,6 @@ export PYTHONPATH="$SS${PYTHONPATH:+:$PYTHONPATH}"
 export SCENESHIFTER_PARITY_ROOT="$OUT"
 export CUDA_VISIBLE_DEVICES="$gpu"
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
-python -u "$SS/scripts/parity_generate.py" --side reference --backbone "$backbone" --gpu "$gpu"
-python -u "$SS/scripts/parity_generate.py" --side unified --backbone "$backbone" --gpu "$gpu"
+python -u "$SS/scripts/parity_generate.py" --side reference --backbone "$backbone"
+python -u "$SS/scripts/parity_generate.py" --side unified --backbone "$backbone"
 python -u "$SS/scripts/compare_parity_videos.py" --backbone "$backbone" --json_out "$OUT/${backbone}_compare.json"

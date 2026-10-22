@@ -1,7 +1,7 @@
 {
   "backbone": "wan_animate",
   "sample_id": "012",
-  "conda_env": "wans2v",
+  "conda_env": "sceneshifter_wans2v",
   "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
   "metadata": "configs/parity/assets/wan_animate_012_frame_prompt.json",
   "official_run_dir": "/tmp/wan_animate_mask_demo_self/exp_012",

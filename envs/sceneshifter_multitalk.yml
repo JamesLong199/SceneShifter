@@ -1,4 +1,4 @@
-name: ss-talking
+name: sceneshifter_multitalk
 channels:
   - defaults
 dependencies:
@@ -10,4 +10,5 @@ dependencies:
       - transformers>=4.49.0
       - diffusers>=0.31.0
       - xformers==0.0.28
+      - huggingface_hub
       - pytest>=8.0

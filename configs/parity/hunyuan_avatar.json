@@ -1,7 +1,7 @@
 {
   "backbone": "hunyuan_avatar",
   "sample_id": "032",
-  "conda_env": "HunyuanVideo-Avatar",
+  "conda_env": "sceneshifter_hunyuan",
   "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
   "metadata": "ablations/metadata_jsons_v2_mmdit/032_metadata.json",
   "official_run_dir": "/data/home/jzlong/codes/HunyuanVideo-Avatar/results/hunyuan_sceneshifter_mmdit_refattn_l19h22_t0_qscale_trans2_ctx2_t2049_0803",

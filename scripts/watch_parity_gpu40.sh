@@ -43,7 +43,7 @@ start_side() {
     source '$CONDA_SH'
     conda activate '$env_name'
     export PYTHONPATH='$SS' SCENESHIFTER_PARITY_ROOT='$OUT' CUDA_VISIBLE_DEVICES='$gpu' CUDA_DEVICE_ORDER=PCI_BUS_ID
-    python -u '$SS/scripts/parity_generate.py' --side '$side' --backbone '$backbone' --gpu '$gpu'
+    python -u '$SS/scripts/parity_generate.py' --side '$side' --backbone '$backbone'
     python -u '$SS/scripts/compare_parity_videos.py' --backbone '$backbone' --json_out '$OUT/${backbone}_compare.json' || true
   " >>"$LOG/${backbone}.log" 2>&1 &
   echo "[watch] started $backbone $side on GPU$gpu pid=$!"

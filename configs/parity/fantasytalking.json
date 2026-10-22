@@ -1,7 +1,7 @@
 {
   "backbone": "fantasytalking",
   "sample_id": "032",
-  "conda_env": "multitalk",
+  "conda_env": "sceneshifter_fantasy",
   "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
   "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L25H26_L39H25/032_metadata.json",
   "official_run_dir": "/data/home/jzlong/data/SceneShifter_dataset/results/fantasytalking_at15_v2_ref_attn_avg_L37H32_L25H26_L39H25_reft9_tstart2_frozenmask_seed43_lt2_lc1_tt22-29",

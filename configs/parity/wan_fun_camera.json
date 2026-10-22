@@ -1,7 +1,7 @@
 {
   "backbone": "wan_fun_camera",
   "sample_id": "092",
-  "conda_env": "multitalk",
+  "conda_env": "sceneshifter_videoxfun",
   "dataset_root": "/data/home/jzlong/data/SceneShifter_dataset",
   "metadata": "ablations/metadata_jsons_v2_simplified_ref_attn_avg_L37H32_L37H35/092_metadata.json",
   "official_run_dir": "/data/home/jzlong/codes/VideoX-Fun/samples/sceneshifter_092_fun_camera",

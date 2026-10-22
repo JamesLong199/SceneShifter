@@ -1,4 +1,4 @@
-name: ss-wan22
+name: sceneshifter_wans2v
 channels:
   - defaults
 dependencies:
@@ -9,4 +9,5 @@ dependencies:
       - numpy>=1.23.5,<2
       - transformers>=4.49.0,<=4.51.3
       - diffusers>=0.31.0
+      - huggingface_hub
       - pytest>=8.0

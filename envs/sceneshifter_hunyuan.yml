@@ -1,4 +1,4 @@
-name: ss-hva
+name: sceneshifter_hunyuan
 channels:
   - defaults
 dependencies:
@@ -9,4 +9,5 @@ dependencies:
       - numpy==1.24.4
       - diffusers==0.33.0
       - transformers>=4.50.0
+      - huggingface_hub
       - pytest>=8.0

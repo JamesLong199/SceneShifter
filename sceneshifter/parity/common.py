@@ -30,24 +30,70 @@ def load_parity_config(backbone: str) -> Dict[str, Any]:
 _DEMO_PATH_KEYS = {"src_root_path", "control_camera_txt"}
 
 
+def default_unified_weights(backbone: str) -> Dict[str, str]:
+    """Checkpoint paths created by scripts/download_checkpoints.py."""
+    root = repo_root() / "weights" / backbone
+    if backbone == "multitalk":
+        return {
+            "ckpt_dir": str(root / "Wan2.1-I2V-14B-480P"),
+            "wav2vec_dir": str(root / "chinese-wav2vec2-base"),
+        }
+    if backbone == "infinitetalk":
+        return {
+            "ckpt_dir": str(root / "Wan2.1-I2V-14B-480P"),
+            "wav2vec_dir": str(root / "chinese-wav2vec2-base"),
+            "infinitetalk_dir": str(root / "InfiniteTalk" / "multi" / "infinitetalk.safetensors"),
+        }
+    if backbone == "fantasytalking":
+        return {
+            "wan_model_dir": str(root / "Wan2.1-I2V-14B-720P"),
+            "fantasytalking_model_path": str(root / "fantasytalking_model.ckpt"),
+            "wav2vec_model_dir": str(root / "wav2vec2-base-960h"),
+        }
+    if backbone == "wan_s2v":
+        return {"ckpt_dir": str(root / "Wan2.2-S2V-14B")}
+    if backbone == "wan_animate":
+        return {"ckpt_dir": str(root / "Wan2.2-Animate-14B")}
+    if backbone == "wan_fun_camera":
+        return {"ckpt": str(root / "Wan2.1-Fun-V1.1-14B-Control-Camera")}
+    if backbone == "hunyuan_avatar":
+        return {
+            "model_base": str(root),
+            "ckpt": str(
+                root
+                / "ckpts"
+                / "hunyuan-video-t2v-720p"
+                / "transformers"
+                / "mp_rank_00_model_states_fp8.pt"
+            ),
+        }
+    raise KeyError(f"no default weights for {backbone}")
+
+
 def apply_demo_config(cfg: Dict[str, Any], demo: str | Path) -> Dict[str, Any]:
-    """Point a parity config at one self-contained examples/demos directory."""
+    """Point a parity config at the shared examples/demos tree and weights/<backbone>."""
     demo_dir = Path(demo)
     if not demo_dir.is_absolute():
         demo_dir = repo_root() / demo_dir
     demo_dir = demo_dir.resolve()
-    metadata = demo_dir / "metadata.json"
+    backbone = str(cfg["backbone"])
+    metadata = demo_dir / "configs" / f"{backbone}.json"
+    if not metadata.is_file():
+        metadata = demo_dir / "metadata.json"
     if not metadata.is_file():
         raise FileNotFoundError(f"demo metadata missing: {metadata}")
     updated = dict(cfg)
     updated["dataset_root"] = str(demo_dir)
     updated["metadata"] = str(metadata)
-    demo_cfg = demo_dir / "demo.json"
+    unified = dict(updated.get("unified") or {})
+    unified.update(default_unified_weights(backbone))
+    demo_cfg = demo_dir / "configs" / f"{backbone}.demo.json"
+    if not demo_cfg.is_file():
+        demo_cfg = demo_dir / "demo.json"
     if demo_cfg.is_file():
         extra = json.loads(demo_cfg.read_text())
         if extra.get("sample_id"):
             updated["sample_id"] = str(extra["sample_id"])
-        unified = dict(updated.get("unified") or {})
         for key, value in (extra.get("unified") or {}).items():
             if (
                 key in _DEMO_PATH_KEYS
@@ -57,7 +103,7 @@ def apply_demo_config(cfg: Dict[str, Any], demo: str | Path) -> Dict[str, Any]:
             ):
                 value = str((demo_dir / value).resolve())
             unified[key] = value
-        updated["unified"] = unified
+    updated["unified"] = unified
     return updated
 
 

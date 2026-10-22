@@ -80,7 +80,7 @@ def test_demo_config_points_at_the_shipped_example(tmp_path):
     assert updated["dataset_root"] == str(demo.resolve())
     assert updated["metadata"] == str((demo / "metadata.json").resolve())
     assert updated["unified"]["src_root_path"] == str((demo / "process").resolve())
-    assert updated["unified"]["ckpt_dir"] == cfg["unified"]["ckpt_dir"]
+    assert updated["unified"]["ckpt_dir"].endswith("weights/wan_animate/Wan2.2-Animate-14B")
 
 
 def test_fun_camera_092_uses_whole_person_cover_without_head_mask():
@@ -106,15 +106,23 @@ def test_parity_launcher_exposes_current_env_media_tools(monkeypatch):
     assert os.environ["PATH"].split(os.pathsep)[0] == expected
 
 
-def test_reference_gpu_mapping_handles_fantasy_worker_override(tmp_path):
+def test_reference_gpu_mapping_handles_fantasy_worker_override(tmp_path, monkeypatch):
     from sceneshifter.parity.common import load_parity_config
     from scripts.parity_generate import _reference_command
 
-    fantasy = _reference_command(
-        load_parity_config("fantasytalking"), tmp_path / "fantasy", 6
-    )
-    multitalk = _reference_command(
-        load_parity_config("multitalk"), tmp_path / "multitalk", 6
-    )
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "6")
+    fantasy = _reference_command(load_parity_config("fantasytalking"), tmp_path / "fantasy")
+    multitalk = _reference_command(load_parity_config("multitalk"), tmp_path / "multitalk")
     assert fantasy[fantasy.index("--gpus") + 1] == "6"
     assert multitalk[multitalk.index("--gpus") + 1] == "0"
+
+
+def test_shared_demo_uses_repo_weights_and_metadata():
+    from sceneshifter.parity.common import apply_demo_config, load_parity_config, repo_root
+
+    cfg = apply_demo_config(load_parity_config("multitalk"), repo_root() / "examples" / "demos")
+    assert cfg["sample_id"] == "023"
+    assert cfg["metadata"].endswith("examples/demos/configs/multitalk.json")
+    assert cfg["unified"]["ckpt_dir"].endswith("weights/multitalk/Wan2.1-I2V-14B-480P")
+    assert cfg["unified"]["wav2vec_dir"].endswith("weights/multitalk/chinese-wav2vec2-base")
+    assert Path(cfg["dataset_root"], "v12_final/023_standing_3_4_0.jpg").is_file()

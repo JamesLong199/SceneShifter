@@ -19,6 +19,7 @@ tests/reference/
 *.pt
 *.safetensors
 checkpoints/
+weights/
 outputs/
 sceneshifter_outputs/
 .coverage
