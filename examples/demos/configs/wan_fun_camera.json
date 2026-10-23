@@ -3,11 +3,15 @@
     "enabled": true,
     "num_frames": 21,
     "frame_splits": [
-      6
+      8,
+      12,
+      17
     ],
     "segment_prompts": [
-      "The woman stands up and walks along the open area in indoor parking garage, speaking to the camera.",
-      "The woman walks along the office floor in modern indoor office, a clean workspace with a meeting table, laptops, and glass partitions, speaking to the camera."
+      "The woman and the man walk along an aisle in indoor supermarket, speaking to the camera.",
+      "The woman and the man walk along the front rows in large indoor conference hall, rows of conference chairs facing forward toward a stage and screen, speaking to the camera.",
+      "The woman and the man walk along the sidewalk in outdoor urban street, a paved sidewalk with shopfronts, street trees, and light foot traffic, speaking to the camera.",
+      "The woman and the man walk along the gallery hall in museum gallery, white walls with framed artworks and a quiet polished floor, speaking to the camera."
     ],
     "segment_prompt_start_timestep": 3,
     "attention_control_schedule": [
@@ -25,10 +29,102 @@
             [
               1,
               "fg"
+            ],
+            [
+              1,
+              "fg"
+            ],
+            [
+              1,
+              "fg"
             ]
           ],
           {
             "fg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ],
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "fg"
+              ]
+            ],
+            "bg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ],
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "fg"
+              ]
+            ]
+          },
+          {
+            "fg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ],
+              [
+                1,
+                "fg"
+              ]
+            ],
+            "bg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "full"
+              ],
+              [
+                1,
+                "fg"
+              ]
+            ]
+          },
+          {
+            "fg": [
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
+                "fg"
+              ],
               [
                 1,
                 "fg"
@@ -45,6 +141,14 @@
               ],
               [
                 1,
+                "fg"
+              ],
+              [
+                1,
+                "fg"
+              ],
+              [
+                1,
                 "full"
               ]
             ]
@@ -54,7 +158,7 @@
           "mask_type": "ref_attn",
           "apply_on_uncond_passes": true,
           "ref_attn_mask_drop_low_percent": 10.0,
-          "ref_attn_mask_min_component_size": 20,
+          "ref_attn_mask_min_component_size": 60,
           "ref_attn_mask_hole_size": 0,
           "auto_q_scale": true,
           "q_scale_bg_only": true,
@@ -69,22 +173,32 @@
             ]
           ],
           "ref_attn_mask_aggregate": "avg_score",
-          "ref_attn_mask_ext_size": 0
+          "ref_attn_mask_ext_size": 1
         }
       }
     ],
     "background_mask_path": {
-      "0": "background_masks/092_squatting_1_1_0_bg_mask.npy"
+      "0": "background_masks/071_standing_3_4_0_sub0_bg_mask.npy",
+      "1": "background_masks/071_standing_3_4_0_sub1_bg_mask.npy"
     },
     "head_mask_path": {
-      "0": "background_masks_head_aug/092_squatting_1_1_0_head_bg_mask.npy"
+      "0": "background_masks_head_aug/071_standing_3_4_0_sub0_head_bg_mask.npy",
+      "1": "background_masks_head_aug/071_standing_3_4_0_sub1_head_bg_mask.npy"
     },
-    "input_mask_cover_original": false,
-    "input_mask_cover_head_only": false
+    "input_mask_cover_original": true,
+    "input_mask_cover_head_only": true,
+    "len_trans": 2,
+    "len_trans_context": 1,
+    "trans_timestep_range": [
+      30,
+      39
+    ]
   },
-  "cond_image": "v12_final/092_squatting_1_1_0.jpg",
+  "cond_image": "v12_final/071_standing_3_4_0.jpg",
   "cond_audio": {
-    "person1": "SceneShifter_audios/WDA_KarenBass_000.wav"
+    "person1": "SceneShifter_audios/WDA_DianneFeinstein_000.wav",
+    "person2": "SceneShifter_audios/WDA_DianneFeinstein_000.wav"
   },
-  "prompt": "The woman stands up and walks along the open area in indoor parking garage, speaking to the camera."
+  "prompt": "The woman and the man walk along an aisle in indoor supermarket, speaking to the camera.",
+  "audio_type": "para"
 }

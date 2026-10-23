@@ -1,7 +1,8 @@
 {
-  "sample_id": "092",
-  "bookkeeping": "MultiTalk Demo 6; Fun Camera parity sample",
+  "sample_id": "071",
+  "bookkeeping": "Wan2.1-Fun Camera Control, Clockwise",
   "unified": {
-    "control_camera_txt": "camera/Zoom_Out.txt"
+    "control_camera_txt": "camera/CW.txt",
+    "sample_size": [768, 576]
   }
 }

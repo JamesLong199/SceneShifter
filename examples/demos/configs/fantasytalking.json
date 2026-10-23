@@ -3,13 +3,11 @@
     "enabled": true,
     "num_frames": 21,
     "frame_splits": [
-      4,
-      17
+      12
     ],
     "segment_prompts": [
-      "The woman and the man stand up and walk along the courtyard in outdoor courtyard, speaking to the camera.",
-      "The woman and the man walk along the terrace deck in rooftop terrace, a rooftop deck with a safety railing and a distant city skyline, speaking to the camera.",
-      "The woman and the man walk along the open area in indoor parking garage, painted concrete pillars, marked lanes, and open space, speaking to the camera."
+      "The man walks along a path in outdoor park, speaking to the camera.",
+      "The man walks along the waiting area in indoor hospital waiting area, aligned seating, clean signage, and a corridor in the background, speaking to the camera."
     ],
     "segment_prompt_start_timestep": 2,
     "attention_control_schedule": [
@@ -27,10 +25,6 @@
             [
               1,
               "fg"
-            ],
-            [
-              1,
-              "fg"
             ]
           ],
           {
@@ -42,47 +36,9 @@
               [
                 1,
                 "full"
-              ],
-              [
-                1,
-                "fg"
               ]
             ],
             "bg": [
-              [
-                1,
-                "fg"
-              ],
-              [
-                1,
-                "full"
-              ],
-              [
-                1,
-                "fg"
-              ]
-            ]
-          },
-          {
-            "fg": [
-              [
-                1,
-                "fg"
-              ],
-              [
-                1,
-                "fg"
-              ],
-              [
-                1,
-                "full"
-              ]
-            ],
-            "bg": [
-              [
-                1,
-                "fg"
-              ],
               [
                 1,
                 "fg"
@@ -122,21 +78,17 @@
       }
     ],
     "background_mask_path": {
-      "0": "background_masks/032_sitting_3_2_0_sub0_bg_mask.npy",
-      "1": "background_masks/032_sitting_3_2_0_sub1_bg_mask.npy"
+      "0": "background_masks/068_standing_1_1_0_bg_mask.npy"
     },
     "head_mask_path": {
-      "0": "background_masks_head_aug/032_sitting_3_2_0_sub0_head_bg_mask.npy",
-      "1": "background_masks_head_aug/032_sitting_3_2_0_sub1_head_bg_mask.npy"
+      "0": "background_masks_head_aug/068_standing_1_1_0_head_bg_mask.npy"
     },
     "input_mask_cover_original": false,
     "input_mask_cover_head_only": false
   },
-  "cond_image": "v12_final/032_sitting_3_2_0.jpg",
+  "cond_image": "v12_final/068_standing_1_1_0.jpg",
   "cond_audio": {
-    "person1": "SceneShifter_audios/RD_Radio54_000.wav",
-    "person2": "SceneShifter_audios/RD_Radio54_000.wav"
+    "person1": "SceneShifter_audios/WDA_JonTester0_000.wav"
   },
-  "prompt": "The woman and the man stand up and walk along the courtyard in outdoor courtyard, speaking to the camera.",
-  "audio_type": "para"
+  "prompt": "The man walks along a path in outdoor park, speaking to the camera."
 }

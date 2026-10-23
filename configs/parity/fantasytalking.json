@@ -1,6 +1,6 @@
 {
   "backbone": "fantasytalking",
-  "sample_id": "032",
+  "sample_id": "068",
   "locks": {
     "official_sha": "8c2d0c9ce2441eb02b5cf1c10d23dbab5ce06677"
   },
@@ -16,5 +16,5 @@
     "len_trans_context": 1,
     "trans_timestep_range": [22, 29]
   },
-  "expected_video_glob": "*032*.mp4"
+  "expected_video_glob": "*068*.mp4"
 }

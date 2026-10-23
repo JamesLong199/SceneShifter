@@ -1,6 +1,6 @@
 {
   "backbone": "wan_fun_camera",
-  "sample_id": "092",
+  "sample_id": "071",
   "locks": {
     "official_sha": "968f0e2192ba4c7a12868bf36d73260d135424ca"
   },
@@ -9,12 +9,12 @@
     "official_script": "examples/wan2.1_fun/predict_v2v_control_camera.py",
     "seed": 43,
     "num_inference_steps": 50,
-    "sample_size": [640, 640],
+    "sample_size": [768, 576],
     "video_length": 81,
     "guidance_scale": 6.0,
     "shift": 3,
     "input_mask_cover_original": true,
-    "input_mask_cover_head_only": false,
+    "input_mask_cover_head_only": true,
     "negative_prompt": "Twisted body, limb deformities, text captions, comic, static, ugly, error, messy code, blurry, low quality, watermark, subtitles."
   },
   "expected_video_glob": "*.mp4"
