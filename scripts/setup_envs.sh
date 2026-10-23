@@ -26,7 +26,7 @@ create() {
     echo "conda not found. Install conda, then rerun this script." >&2
     exit 1
   fi
-  conda env create -f "$file" --force
+  conda env create -f "$file"
   echo "Created $env_name. Activate it with: conda activate $env_name"
 }
 
