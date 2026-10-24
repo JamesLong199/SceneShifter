@@ -182,7 +182,18 @@ def _record_failure(output_root: Path, task_id: str, gpu_id: str, task: Dict[str
     return record
 
 
+def _prepend_python_bin_to_path() -> None:
+    """Official scripts call ffmpeg and ffprobe by name. A direct env python
+    does not put that env's bin directory on PATH the way conda activate does.
+    """
+    env_bin = str(Path(sys.executable).resolve().parent)
+    parts = [part for part in os.environ.get("PATH", "").split(os.pathsep) if part]
+    if env_bin not in parts:
+        os.environ["PATH"] = os.pathsep.join([env_bin, *parts])
+
+
 def worker_main(gpu_id: str, tasks_map, task_queue, status, in_progress, failure_records, stop_event, args) -> None:
+    _prepend_python_bin_to_path()
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     setup_logging(args.log_file, force=True)
