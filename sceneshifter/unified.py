@@ -682,6 +682,12 @@ def _install_talking_official_decode_fixes(adapter: str) -> None:
     )
     if adapter != "infinitetalk":
         return
+    # Official InfiniteTalk pins the first latent to the clean condition and
+    # still injects audio there. SceneShifter removes that pin and zeros the
+    # frame-0 audio residual inside the adapter. Base mode keeps the pin.
+    if not _INJECT_ROUTER:
+        print("[sceneshifter] kept official InfiniteTalk first-clip latent pin", flush=True)
+        return
     cls = getattr(talking, "InfiniteTalkPipeline", None)
     if cls is None:
         print("[sceneshifter] InfiniteTalkPipeline missing; skip first-clip pin", flush=True)
