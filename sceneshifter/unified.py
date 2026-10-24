@@ -12,6 +12,9 @@ from typing import Any, Dict, List, Optional
 
 from .common import overlay_routing, repo_root, resolve_metadata
 
+# Process-local. run_unified sets this before dispatch; missing or None means on.
+_INJECT_ROUTER = True
+
 
 def resolve_official_root(cfg: Dict[str, Any]) -> Path:
     raw = (cfg.get("unified") or {}).get("official_root") or ""
@@ -124,6 +127,9 @@ def _create_router(cfg: Dict[str, Any], routing: Dict[str, Any], patch_h: int = 
 
 
 def _inject(model: Any, router: Any, adapter: str) -> List[Any]:
+    if not _INJECT_ROUTER:
+        print("[sceneshifter] router injection disabled", flush=True)
+        return []
     from sceneshifter.hooks import inject_router
 
     targets = []
@@ -1521,6 +1527,9 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
 
 
 def run_unified(cfg: Dict[str, Any], out_dir: Path) -> None:
+    global _INJECT_ROUTER
+    inject = cfg.get("inject", True)
+    _INJECT_ROUTER = True if inject is None else bool(inject)
     official = resolve_official_root(cfg)
     if not official.is_dir():
         raise FileNotFoundError(

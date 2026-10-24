@@ -67,6 +67,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no_skip_existing", action="store_false", dest="skip_existing")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
+    parser.add_argument("--inject", action="store_true", default=True)
+    parser.add_argument("--no_inject", action="store_false", dest="inject")
     parser.add_argument("--log_file", default=None)
     parser.add_argument(
         "--resume_state",
@@ -133,6 +135,7 @@ def task_config(args: argparse.Namespace, task: Dict[str, Any]) -> Dict[str, Any
     unified = dict(cfg.get("unified") or {})
     unified.update(default_unified_weights(args.backbone))
     cfg["unified"] = unified
+    cfg["inject"] = args.inject
     return cfg
 
 

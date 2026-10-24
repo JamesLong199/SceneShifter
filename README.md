@@ -327,4 +327,6 @@ python scripts/batch_generate.py \
   --gpus 0,1
 ```
 
+Add `--no_inject` to run the unmodified attention path for MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or HunyuanVideo-Avatar.
+
 `--dry_run` checks that each metadata file's image, audio, and masks exist. `--ids 023,032` or `--start_id` and `--end_id` limit the clips.

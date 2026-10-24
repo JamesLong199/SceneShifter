@@ -75,9 +75,12 @@ def main() -> int:
         default="examples",
         help="Shared demo directory.",
     )
+    parser.add_argument("--inject", action="store_true", default=True)
+    parser.add_argument("--no_inject", action="store_false", dest="inject")
     args = parser.parse_args()
 
     cfg = apply_demo_config(load_backbone_config(args.backbone), args.demo)
+    cfg["inject"] = args.inject
     out_dir = _output_dir(args.backbone, args.output_root)
     os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
