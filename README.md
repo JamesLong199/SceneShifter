@@ -2,57 +2,64 @@
 
 ## Demo
 
-### Audio-driven Human Animation (MultiTalk)
+<details>
+<summary style="cursor: pointer; user-select: none;"><b>Audio-driven Human Animation (MultiTalk)</b> — click to show / hide demos</summary>
 
-<div style="overflow-x: auto; overflow-y: hidden; max-width: 100%;">
+<div style="overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; max-width: 100%; border: 1px solid #e5e5e5; border-radius: 8px; padding: 8px; margin-top: 8px;">
 
-<table border="0" style="width: max-content; border-collapse: separate; border-spacing: 14px 8px;">
+<table border="0" style="width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 14px 8px;">
 <tr>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>urban street → library</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 1</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/023.gif" width="240" alt="urban street to library">
+<div style="margin-top: 6px;">urban street → library</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>courtyard → rooftop terrace → parking garage</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 2</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/032.gif" width="240" alt="courtyard to rooftop terrace to parking garage">
+<div style="margin-top: 6px;">courtyard → rooftop terrace → parking garage</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>urban street → bus stop → hotel lobby → park → café</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 3</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/036.gif" width="240" alt="urban street to bus stop to hotel lobby to park to café">
+<div style="margin-top: 6px;">urban street → bus stop → hotel lobby → park → café</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>parking garage → library → bus stop → conference hall</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 4</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/062.gif" width="240" alt="parking garage to library to bus stop to conference hall">
+<div style="margin-top: 6px;">parking garage → library → bus stop → conference hall</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>classroom → elevator lobby → park → parking garage</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 5</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/063.gif" width="240" alt="classroom to elevator lobby to park to parking garage">
+<div style="margin-top: 6px;">classroom → elevator lobby → park → parking garage</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>parking garage → office</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 6</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/092.gif" width="240" alt="parking garage to office">
+<div style="margin-top: 6px;">parking garage → office</div>
 </div>
 </details>
 </td>
@@ -60,41 +67,46 @@
 <tr>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>urban street → airport</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 7</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/104.gif" width="240" alt="urban street to airport">
+<div style="margin-top: 6px;">urban street → airport</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>courtyard → airport</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 8</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/110.gif" width="240" alt="courtyard to airport">
+<div style="margin-top: 6px;">courtyard → airport</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>airport → supermarket → elevator lobby → parking garage → urban street</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 9</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/120.gif" width="240" alt="airport to supermarket to elevator lobby to parking garage to urban street">
+<div style="margin-top: 6px;">airport → supermarket → elevator lobby → parking garage → urban street</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>café → parking garage</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 10</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/163.gif" width="240" alt="café to parking garage">
+<div style="margin-top: 6px;">café → parking garage</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>classroom → conference hall</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 11</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/multitalk/172.gif" width="240" alt="classroom to conference hall">
+<div style="margin-top: 6px;">classroom → conference hall</div>
 </div>
 </details>
 </td>
@@ -102,50 +114,57 @@
 </table>
 
 </div>
+</details>
 
-### Video-driven Human Animation (Wan-Animate)
+<details>
+<summary style="cursor: pointer; user-select: none;"><b>Video-driven Human Animation (Wan-Animate)</b> — click to show / hide demos</summary>
 
-<div style="overflow-x: auto; overflow-y: hidden; max-width: 100%;">
+<div style="overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; max-width: 100%; border: 1px solid #e5e5e5; border-radius: 8px; padding: 8px; margin-top: 8px;">
 
-<table border="0" style="width: max-content; border-collapse: separate; border-spacing: 14px 8px;">
+<table border="0" style="width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 14px 8px;">
 <tr>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>supermarket → conference hall → parking garage</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 1</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/wan_animate/012.gif" width="240" alt="supermarket to conference hall to parking garage">
+<div style="margin-top: 6px;">supermarket → conference hall → parking garage</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>hotel lobby → urban street</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 2</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/wan_animate/047.gif" width="240" alt="hotel lobby to urban street">
+<div style="margin-top: 6px;">hotel lobby → urban street</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>supermarket → podcast room → subway → courtyard</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 3</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/wan_animate/051.gif" width="240" alt="supermarket to podcast room to subway to courtyard">
+<div style="margin-top: 6px;">supermarket → podcast room → subway → courtyard</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>airport → courtyard → office</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 4</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/wan_animate/099.gif" width="240" alt="airport to courtyard to office">
+<div style="margin-top: 6px;">airport → courtyard → office</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>hotel lobby → rooftop terrace → covered walkway → supermarket</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Demo 5</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/wan_animate/117.gif" width="240" alt="hotel lobby to rooftop terrace to covered walkway to supermarket">
+<div style="margin-top: 6px;">hotel lobby → rooftop terrace → covered walkway → supermarket</div>
 </div>
 </details>
 </td>
@@ -153,50 +172,57 @@
 </table>
 
 </div>
+</details>
 
-### Camera Control (Wan Fun Camera)
+<details>
+<summary style="cursor: pointer; user-select: none;"><b>Camera Control (Wan Fun Camera)</b> — click to show / hide demos</summary>
 
-<div style="overflow-x: auto; overflow-y: hidden; max-width: 100%;">
+<div style="overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; max-width: 100%; border: 1px solid #e5e5e5; border-radius: 8px; padding: 8px; margin-top: 8px;">
 
-<table border="0" style="width: max-content; border-collapse: separate; border-spacing: 14px 8px;">
+<table border="0" style="width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 14px 8px;">
 <tr>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>pan left: park → hospital</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Pan left</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/wan_fun_camera/068_pan_left.gif" width="240" alt="park to hospital">
+<div style="margin-top: 6px;">park → hospital</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>pan right: courtyard → elevator lobby → workshop</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Pan right</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/wan_fun_camera/096_pan_right.gif" width="240" alt="courtyard to elevator lobby to workshop">
+<div style="margin-top: 6px;">courtyard → elevator lobby → workshop</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>zoom out: museum → parking garage</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Zoom out</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/wan_fun_camera/126_zoom_out.gif" width="240" alt="museum to parking garage">
+<div style="margin-top: 6px;">museum → parking garage</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>clockwise: supermarket → conference hall → urban street → museum</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Clockwise</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/wan_fun_camera/071_clockwise.gif" width="240" alt="supermarket to conference hall to urban street to museum">
+<div style="margin-top: 6px;">supermarket → conference hall → urban street → museum</div>
 </div>
 </details>
 </td>
 <td style="vertical-align: top;">
 <details>
-<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>anti-clockwise: bus stop → train station → supermarket → beach</b></summary>
+<summary style="cursor: pointer; user-select: none; padding: 6px 12px; border: 1px solid #bbb; border-radius: 6px; background: #f6f8fa; white-space: nowrap; display: inline-block;"><b>Anti-clockwise</b></summary>
 <div style="margin-top: 10px;">
 <img src="assets/demos/wan_fun_camera/153_anti_clockwise.gif" width="240" alt="bus stop to train station to supermarket to beach">
+<div style="margin-top: 6px;">bus stop → train station → supermarket → beach</div>
 </div>
 </details>
 </td>
@@ -204,6 +230,7 @@
 </table>
 
 </div>
+</details>
 
 ## Installation
 
