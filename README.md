@@ -1,4 +1,14 @@
-# SceneShifter
+# SceneShifter: Training-free Multi-Scene Temporal Control for Audio-driven Human Animation
+
+**Jianzhi Long<sup>1</sup>, Rong-Cheng Tu<sup>2✉</sup>, Hao Guan<sup>2</sup>, Siyuan Liang<sup>2</sup>, Shunyu Liu<sup>2</sup>, Xiao Luo<sup>3</sup>, Dacheng Tao<sup>2✉</sup>**
+
+<sup>1</sup> The University of Sydney, New South Wales, Australia  
+<sup>2</sup> Generative AI Lab, College of Computing and Data Science, Nanyang Technological University, Singapore, Singapore  
+<sup>3</sup> University of Wisconsin–Madison, Wisconsin, USA
+
+✉ Corresponding authors
+
+[Paper](PAPER_LINK) | [Project Page](PROJECT_PAGE_LINK)
 
 ## Demo
 
