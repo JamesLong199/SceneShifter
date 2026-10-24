@@ -63,7 +63,7 @@ def default_unified_weights(backbone: str) -> Dict[str, str]:
 
 
 def apply_demo_config(cfg: Dict[str, Any], demo: str | Path) -> Dict[str, Any]:
-    """Point a backbone config at the shared examples/demos tree and weights/<backbone>."""
+    """Point a backbone config at the shared examples tree and weights/<backbone>."""
     demo_dir = Path(demo)
     if not demo_dir.is_absolute():
         demo_dir = repo_root() / demo_dir
@@ -105,7 +105,7 @@ def resolve_metadata(cfg: Dict[str, Any]) -> Path:
         return meta
     if str(meta).startswith("configs/"):
         return repo_root() / meta
-    return Path(cfg.get("dataset_root") or (repo_root() / "examples" / "demos")) / meta
+    return Path(cfg.get("dataset_root") or (repo_root() / "examples")) / meta
 
 
 def git_head(repo: str) -> str:

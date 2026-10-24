@@ -15,7 +15,7 @@ third_party/*
 !third_party/backbones.lock
 tests/reference/
 *.mp4
-!examples/demos/**/*.mp4
+!examples/**/*.mp4
 *.pt
 *.safetensors
 checkpoints/

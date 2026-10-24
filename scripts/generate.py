@@ -72,7 +72,7 @@ def main() -> int:
     parser.add_argument("--output_root", default=None)
     parser.add_argument(
         "--demo",
-        default="examples/demos",
+        default="examples",
         help="Shared demo directory.",
     )
     args = parser.parse_args()
