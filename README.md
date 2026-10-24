@@ -2,39 +2,91 @@
 
 ## Demo
 
-Videos below are the SceneShifter clips from the rebuttal page. Each image is a GIF, following the [DiTCtrl](https://github.com/TencentARC/DiTCtrl) README.
-
-### MultiTalk
+### Audio-driven Human Animation (MultiTalk)
 
 <div style="overflow-x: auto;">
 
-| Demo 1 | Demo 2 | Demo 3 | Demo 4 | Demo 5 | Demo 6 |
-|---|---|---|---|---|---|
-| <img src="assets/demos/multitalk/023.gif" width="240" alt="MultiTalk Demo 1"> | <img src="assets/demos/multitalk/032.gif" width="240" alt="MultiTalk Demo 2"> | <img src="assets/demos/multitalk/036.gif" width="240" alt="MultiTalk Demo 3"> | <img src="assets/demos/multitalk/062.gif" width="240" alt="MultiTalk Demo 4"> | <img src="assets/demos/multitalk/063.gif" width="240" alt="MultiTalk Demo 5"> | <img src="assets/demos/multitalk/092.gif" width="240" alt="MultiTalk Demo 6"> |
+<table>
+<tr>
+<td><img src="assets/demos/multitalk/023.gif" width="240" alt="urban street to library"></td>
+<td><img src="assets/demos/multitalk/032.gif" width="240" alt="courtyard to rooftop terrace to parking garage"></td>
+<td><img src="assets/demos/multitalk/036.gif" width="240" alt="urban street to bus stop to hotel lobby to park to café"></td>
+<td><img src="assets/demos/multitalk/062.gif" width="240" alt="parking garage to library to bus stop to conference hall"></td>
+<td><img src="assets/demos/multitalk/063.gif" width="240" alt="classroom to elevator lobby to park to parking garage"></td>
+<td><img src="assets/demos/multitalk/092.gif" width="240" alt="parking garage to office"></td>
+</tr>
+<tr>
+<td>urban street → library</td>
+<td>courtyard → rooftop terrace → parking garage</td>
+<td>urban street → bus stop → hotel lobby → park → café</td>
+<td>parking garage → library → bus stop → conference hall</td>
+<td>classroom → elevator lobby → park → parking garage</td>
+<td>parking garage → office</td>
+</tr>
+</table>
 
-| Demo 7 | Demo 8 | Demo 9 | Demo 10 | Demo 11 |
-|---|---|---|---|---|
-| <img src="assets/demos/multitalk/104.gif" width="240" alt="MultiTalk Demo 7"> | <img src="assets/demos/multitalk/110.gif" width="240" alt="MultiTalk Demo 8"> | <img src="assets/demos/multitalk/120.gif" width="240" alt="MultiTalk Demo 9"> | <img src="assets/demos/multitalk/163.gif" width="240" alt="MultiTalk Demo 10"> | <img src="assets/demos/multitalk/172.gif" width="240" alt="MultiTalk Demo 11"> |
+<table>
+<tr>
+<td><img src="assets/demos/multitalk/104.gif" width="240" alt="urban street to airport"></td>
+<td><img src="assets/demos/multitalk/110.gif" width="240" alt="courtyard to airport"></td>
+<td><img src="assets/demos/multitalk/120.gif" width="240" alt="airport to supermarket to elevator lobby to parking garage to urban street"></td>
+<td><img src="assets/demos/multitalk/163.gif" width="240" alt="café to parking garage"></td>
+<td><img src="assets/demos/multitalk/172.gif" width="240" alt="classroom to conference hall"></td>
+</tr>
+<tr>
+<td>urban street → airport</td>
+<td>courtyard → airport</td>
+<td>airport → supermarket → elevator lobby → parking garage → urban street</td>
+<td>café → parking garage</td>
+<td>classroom → conference hall</td>
+</tr>
+</table>
 
 </div>
 
-### Wan-Animate
+### Video-driven Human Animation (Wan-Animate)
 
 <div style="overflow-x: auto;">
 
-| Demo 1 | Demo 2 | Demo 3 | Demo 4 | Demo 5 |
-|---|---|---|---|---|
-| <img src="assets/demos/wan_animate/012.gif" width="240" alt="Wan-Animate Demo 1"> | <img src="assets/demos/wan_animate/047.gif" width="240" alt="Wan-Animate Demo 2"> | <img src="assets/demos/wan_animate/051.gif" width="240" alt="Wan-Animate Demo 3"> | <img src="assets/demos/wan_animate/099.gif" width="240" alt="Wan-Animate Demo 4"> | <img src="assets/demos/wan_animate/117.gif" width="240" alt="Wan-Animate Demo 5"> |
+<table>
+<tr>
+<td><img src="assets/demos/wan_animate/012.gif" width="240" alt="supermarket to conference hall to parking garage"></td>
+<td><img src="assets/demos/wan_animate/047.gif" width="240" alt="hotel lobby to urban street"></td>
+<td><img src="assets/demos/wan_animate/051.gif" width="240" alt="supermarket to podcast room to subway to courtyard"></td>
+<td><img src="assets/demos/wan_animate/099.gif" width="240" alt="airport to courtyard to office"></td>
+<td><img src="assets/demos/wan_animate/117.gif" width="240" alt="hotel lobby to rooftop terrace to covered walkway to supermarket"></td>
+</tr>
+<tr>
+<td>supermarket → conference hall → parking garage</td>
+<td>hotel lobby → urban street</td>
+<td>supermarket → podcast room → subway → courtyard</td>
+<td>airport → courtyard → office</td>
+<td>hotel lobby → rooftop terrace → covered walkway → supermarket</td>
+</tr>
+</table>
 
 </div>
 
-### Wan Fun Camera
+### Camera Control (Wan Fun Camera)
 
 <div style="overflow-x: auto;">
 
-| Pan Left | Pan Right | Zoom Out | Clockwise | Anti-Clockwise |
-|---|---|---|---|---|
-| <img src="assets/demos/wan_fun_camera/068_pan_left.gif" width="240" alt="Pan Left"> | <img src="assets/demos/wan_fun_camera/096_pan_right.gif" width="240" alt="Pan Right"> | <img src="assets/demos/wan_fun_camera/126_zoom_out.gif" width="240" alt="Zoom Out"> | <img src="assets/demos/wan_fun_camera/071_clockwise.gif" width="240" alt="Clockwise"> | <img src="assets/demos/wan_fun_camera/153_anti_clockwise.gif" width="240" alt="Anti-Clockwise"> |
+<table>
+<tr>
+<td><img src="assets/demos/wan_fun_camera/068_pan_left.gif" width="240" alt="park to hospital"></td>
+<td><img src="assets/demos/wan_fun_camera/096_pan_right.gif" width="240" alt="courtyard to elevator lobby to workshop"></td>
+<td><img src="assets/demos/wan_fun_camera/126_zoom_out.gif" width="240" alt="museum to parking garage"></td>
+<td><img src="assets/demos/wan_fun_camera/071_clockwise.gif" width="240" alt="supermarket to conference hall to urban street to museum"></td>
+<td><img src="assets/demos/wan_fun_camera/153_anti_clockwise.gif" width="240" alt="bus stop to train station to supermarket to beach"></td>
+</tr>
+<tr>
+<td>pan left<br>park → hospital</td>
+<td>pan right<br>courtyard → elevator lobby → workshop</td>
+<td>zoom out<br>museum → parking garage</td>
+<td>clockwise<br>supermarket → conference hall → urban street → museum</td>
+<td>anti-clockwise<br>bus stop → train station → supermarket → beach</td>
+</tr>
+</table>
 
 </div>
 
