@@ -9,13 +9,13 @@ from typing import Any, Dict, List
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[1]
 
 
-def load_parity_config(backbone: str) -> Dict[str, Any]:
+def load_backbone_config(backbone: str) -> Dict[str, Any]:
     path = repo_root() / "configs" / "parity" / f"{backbone}.json"
     if not path.is_file():
-        raise FileNotFoundError(f"missing parity config {path}")
+        raise FileNotFoundError(f"missing backbone config {path}")
     return json.loads(path.read_text())
 
 
@@ -63,7 +63,7 @@ def default_unified_weights(backbone: str) -> Dict[str, str]:
 
 
 def apply_demo_config(cfg: Dict[str, Any], demo: str | Path) -> Dict[str, Any]:
-    """Point a parity config at the shared examples/demos tree and weights/<backbone>."""
+    """Point a backbone config at the shared examples/demos tree and weights/<backbone>."""
     demo_dir = Path(demo)
     if not demo_dir.is_absolute():
         demo_dir = repo_root() / demo_dir

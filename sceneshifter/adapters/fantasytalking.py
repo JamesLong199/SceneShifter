@@ -201,7 +201,7 @@ def wrap_fantasy_i2v_cross_module(module: nn.Module, router: Optional[FramePromp
             )
         if not getattr(active, "_debug_fantasy_cross_printed", False):
             print(
-                "[parity-unified] fantasy I2V cross-attn routed "
+                "[sceneshifter] fantasy I2V cross-attn routed "
                 f"segments={active.num_segments} seq={int(q.size(1))} spatial={spatial} "
                 f"step={timestep_idx}",
                 flush=True,

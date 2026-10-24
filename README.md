@@ -312,4 +312,19 @@ Demo images, audio, and masks are in `examples/demos/`. Each backbone reads its 
 | Wan Fun camera | `conda activate sceneshifter_videoxfun && python scripts/generate.py --backbone wan_fun_camera --demo examples/demos --output_root outputs/demos` |
 | HunyuanVideo-Avatar | `conda activate sceneshifter_hunyuan && python scripts/generate.py --backbone hunyuan_avatar --demo examples/demos --output_root outputs/demos` |
 
-The video is written to `outputs/demos/<backbone>/videos/`.
+The video is written to `outputs/demos/<backbone>/videos/<id>.mp4`.
+
+## Batch generation
+
+The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or HunyuanVideo-Avatar over a metadata folder. One process is started per GPU. A clip is skipped when `videos/<id>.mp4` is already in the output folder.
+
+```bash
+python scripts/batch_generate.py \
+  --backbone multitalk \
+  --dataset_root /path/to/SceneShifter_dataset \
+  --metadata_glob 'ablations/metadata_jsons/*_metadata.json' \
+  --output_root outputs/batch/multitalk \
+  --gpus 0,1
+```
+
+`--dry_run` checks that each metadata file's image, audio, and masks exist. `--ids 023,032` or `--start_id` and `--end_id` limit the clips.

@@ -15,7 +15,6 @@ import torch.nn as nn
 
 from ..attention import gather_attention, scaled_dot_product
 from ..layouts import S2VTokenLayout
-from ..parity.trace import trace_tensor
 from ..ref_attn import (
     get_attn_map_with_target,
     get_attn_map_with_target_animate,
@@ -887,42 +886,12 @@ def scene_masked_official_flash(
     block_idx = getattr(module, "_ss_block_idx", 0)
     pass_type = str(getattr(module, "_ss_pass", "cond"))
     block = router.active_block(timestep_idx, block_idx, pass_type)
-    trace_meta = {"backend": router.backend, "pass_type": pass_type}
-    trace_tensor(
-        "self_q_post_rope",
-        q,
-        step=timestep_idx,
-        layer=block_idx,
-        **trace_meta,
-    )
-    trace_tensor(
-        "self_k_post_rope",
-        k,
-        step=timestep_idx,
-        layer=block_idx,
-        **trace_meta,
-    )
-    trace_tensor(
-        "self_v",
-        v,
-        step=timestep_idx,
-        layer=block_idx,
-        **trace_meta,
-    )
     extra_key_fn = getattr(module, "_ss_extra_key_fn", None)
     if block is None:
         # Keep official packed-sequence flash (k_lens=seq_lens). Do not rewrite q/k/v.
         out = orig(*args, **kwargs)
         # Collect vanilla scores so scheduled steps can build the live mask.
         _collect_live_ref_attn(router, module, q, k, timestep_idx, block_idx, pass_type)
-        trace_tensor(
-            "self_out",
-            out[0] if isinstance(out, tuple) else out,
-            step=timestep_idx,
-            layer=block_idx,
-            routed=False,
-            **trace_meta,
-        )
         return out
     # Fun Camera keeps the mask published after the previous forward.
     # Rebuilding it on every layer would apply scores from this same step,
@@ -938,13 +907,6 @@ def scene_masked_official_flash(
             # from scores collected at t-1, then rebuilds after the step.
             refresh_idx -= 1
         router.refresh_live_mask_from_stored(refresh_idx, block)
-    trace_tensor(
-        "live_bg",
-        getattr(router, "live_bg", None),
-        step=timestep_idx,
-        layer=block_idx,
-        **trace_meta,
-    )
 
     unscaled_q = q
     q = router.apply_q_scale(q, block)
@@ -959,13 +921,6 @@ def scene_masked_official_flash(
     from .talking_audio import publish_scaled_query_to_audio_map
 
     publish_scaled_query_to_audio_map(unscaled_q, q, getattr(router, "backend", None))
-    trace_tensor(
-        "self_q_scaled",
-        q,
-        step=timestep_idx,
-        layer=block_idx,
-        **trace_meta,
-    )
     # Official _forward_with_scene_mask accumulates in v.dtype (bf16), not fp32 Q.
     out = q.new_zeros(q.shape, dtype=v.dtype)
     video_tokens = router.num_frames * router.spatial_tokens
@@ -1171,14 +1126,6 @@ def scene_masked_official_flash(
             _collect_live_ref_attn(
                 router, module, ref_loc_q, k, timestep_idx, block_idx, pass_type
             )
-            trace_tensor(
-                "self_out",
-                out,
-                step=timestep_idx,
-                layer=block_idx,
-                routed=True,
-                **trace_meta,
-            )
             return out
         piece = _call_official_flash(
             orig,
@@ -1196,14 +1143,6 @@ def scene_masked_official_flash(
         out.index_copy_(1, extra_idx, piece.to(dtype=out.dtype))
     _collect_live_ref_attn(
         router, module, ref_loc_q, k, timestep_idx, block_idx, pass_type
-    )
-    trace_tensor(
-        "self_out",
-        out,
-        step=timestep_idx,
-        layer=block_idx,
-        routed=True,
-        **trace_meta,
     )
     return out
 

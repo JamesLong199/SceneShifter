@@ -13,7 +13,6 @@ import torch
 import torch.nn as nn
 
 from ..layouts import HunyuanMMDiTLayout
-from ..parity.trace import trace_tensor
 from ..ref_attn import live_bg_from_subject_fg
 from ..router import FramePromptRouter
 from .base import (
@@ -640,10 +639,6 @@ def hunyuan_scene_varlen(
     pass_type = str(getattr(module, "_ss_pass", "cond"))
     block_idx = getattr(module, "_ss_block_idx", None)
     block = router.active_block(timestep, block_idx, pass_type)
-    trace_meta = {"backend": router.backend, "pass_type": pass_type}
-    trace_tensor("self_q_post_rope", q4, step=timestep, layer=block_idx, **trace_meta)
-    trace_tensor("self_k_post_rope", k4, step=timestep, layer=block_idx, **trace_meta)
-    trace_tensor("self_v", v4, step=timestep, layer=block_idx, **trace_meta)
     out = q4.new_zeros(q4.shape)
     if batch > 1:
         # Native Hunyuan captures localization from the conditional row before
@@ -656,13 +651,6 @@ def hunyuan_scene_varlen(
             timestep,
             block_idx,
             "cond",
-        )
-        trace_tensor(
-            "live_bg",
-            getattr(router, "live_bg", None),
-            step=timestep,
-            layer=block_idx,
-            **trace_meta,
         )
     for row in range(batch):
         row_pass = pass_type if batch == 1 else ("uncond" if row == 0 else "cond")
@@ -699,7 +687,6 @@ def hunyuan_scene_varlen(
                 attn = attn.view(nq, heads, dim)
             out[row].index_copy_(0, group["q"], attn.to(dtype=out.dtype))
     flattened = out.reshape(batch * seq, heads, dim)
-    trace_tensor("self_out", flattened, step=timestep, layer=block_idx, **trace_meta)
     return flattened
 
 

@@ -31,7 +31,7 @@ def _load_routing(cfg: Dict[str, Any]) -> Dict[str, Any]:
     from sceneshifter.config import load_frame_prompt_config
 
     meta_path = resolve_metadata(cfg)
-    # Animate parity metadata lives under configs/ and stores masks next to it.
+    # Animate demo metadata lives under configs/ and stores masks next to it.
     if str(cfg.get("metadata") or "").startswith("configs/"):
         asset_root = meta_path.parent
     else:
@@ -71,7 +71,8 @@ def _write_input_json(cfg: Dict[str, Any], out_dir: Path) -> Path:
         "cond_audio": _resolve_media(root, meta.get("cond_audio")),
         "audio_type": meta.get("audio_type", "para"),
     }
-    path = out_dir / "input.json"
+    path = out_dir / "inputs" / f"{cfg['sample_id']}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2))
     return path
 
@@ -135,7 +136,7 @@ def _inject(model: Any, router: Any, adapter: str) -> List[Any]:
     for target in targets:
         try:
             bound = inject_router(target, router, adapter=adapter, expected_min=1)
-            print(f"[parity-unified] injected {len(bound)} modules on {type(target).__name__}", flush=True)
+            print(f"[sceneshifter] injected {len(bound)} modules on {type(target).__name__}", flush=True)
             return bound
         except Exception as exc:  # noqa: BLE001
             last_err = exc
@@ -191,7 +192,7 @@ def _commit_text_embeddings(
 ) -> None:
     usable = [_unwrap_prompt_embed(item) for item in embeds]
     if not usable or not all(_is_text_embed(item) for item in usable):
-        print(f"[parity-unified] skip non-tensor segment embeds from {source}", flush=True)
+        print(f"[sceneshifter] skip non-tensor segment embeds from {source}", flush=True)
         return
     router.set_text_embeddings(usable)
     if project:
@@ -199,18 +200,8 @@ def _commit_text_embeddings(
 
         attach_text_projector(router, pipeline)
         project_router_text_embeddings(router)
-    from sceneshifter.parity.trace import trace_tensor
-
-    for index, item in enumerate(router.text_embeddings):
-        trace_tensor(
-            "segment_text",
-            item,
-            backend=getattr(router, "backend", None),
-            segment=index,
-            source=source,
-        )
     dims = [tuple(item.shape) if hasattr(item, "shape") else None for item in router.text_embeddings]
-    print(f"[parity-unified] encoded {len(usable)} segment prompts via {source} {dims}", flush=True)
+    print(f"[sceneshifter] encoded {len(usable)} segment prompts via {source} {dims}", flush=True)
 
 
 def _install_encode_prompt_hook(pipeline: Any, router: Any, routing: Dict[str, Any]) -> None:
@@ -249,7 +240,7 @@ def _install_encode_prompt_hook(pipeline: Any, router: Any, routing: Dict[str, A
             out = _call_original(prompt, positive=positive, **call_kwargs)
         if not positive:
             router.null_text_embeddings = _unwrap_prompt_embed(out)
-            print("[parity-unified] captured official null prompt embed", flush=True)
+            print("[sceneshifter] captured official null prompt embed", flush=True)
         elif isinstance(out, tuple) and len(out) >= 2 and out[1] is not None:
             router.null_text_embeddings = _unwrap_prompt_embed(out[1])
         if positive and not state["busy"] and getattr(router, "text_embeddings", None) is None:
@@ -269,7 +260,7 @@ def _install_encode_prompt_hook(pipeline: Any, router: Any, routing: Dict[str, A
                     except Exception:
                         pass
                 except Exception as exc:  # noqa: BLE001
-                    print(f"[parity-unified] encode_prompt hook skip: {exc}", flush=True)
+                    print(f"[sceneshifter] encode_prompt hook skip: {exc}", flush=True)
         return out
 
     pipeline.encode_prompt = wrapped
@@ -284,7 +275,7 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
     try:
         _capture_null_context(pipeline, router)
     except Exception as exc:  # noqa: BLE001
-        print(f"[parity-unified] capture skip: {exc}", flush=True)
+        print(f"[sceneshifter] capture skip: {exc}", flush=True)
     try:
         embeds = []
         device = _encoder_device(pipeline)
@@ -294,7 +285,7 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
                     out = pipeline.encode_prompt(prompt)
                     embeds.append(_unwrap_prompt_embed(out))
             except Exception as exc:  # noqa: BLE001
-                print(f"[parity-unified] encode_prompt skip: {exc}", flush=True)
+                print(f"[sceneshifter] encode_prompt skip: {exc}", flush=True)
                 embeds = []
         if not embeds and hasattr(pipeline, "text_encoder") and callable(pipeline.text_encoder):
             encoder = pipeline.text_encoder
@@ -314,7 +305,7 @@ def _maybe_set_text_embeddings(router: Any, pipeline: Any, routing: Dict[str, An
         if embeds:
             _commit_text_embeddings(router, pipeline, embeds, source="encode_prompt")
     except Exception as exc:  # noqa: BLE001
-        print(f"[parity-unified] text embed skip: {exc}", flush=True)
+        print(f"[sceneshifter] text embed skip: {exc}", flush=True)
 
 
 def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwargs):
@@ -333,19 +324,10 @@ def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwarg
         if embeds and all(_is_text_embed(item) for item in embeds):
             router.set_text_embeddings(embeds)
             from sceneshifter.adapters.base import project_router_text_embeddings
-            from sceneshifter.parity.trace import trace_tensor
 
             project_router_text_embeddings(router)
-            for index, item in enumerate(router.text_embeddings):
-                trace_tensor(
-                    "segment_text",
-                    item,
-                    backend=getattr(router, "backend", None),
-                    segment=index,
-                    source="official T5 pair",
-                )
             dims = [tuple(t.shape) if hasattr(t, "shape") else None for t in router.text_embeddings]
-            print(f"[parity-unified] encoded {len(embeds)} segment prompts on official T5 {dims}", flush=True)
+            print(f"[sceneshifter] encoded {len(embeds)} segment prompts on official T5 {dims}", flush=True)
         return
     # Native S2V encodes every positive segment in one T5 batch and uses the
     # first result as its baseline context before routing starts.
@@ -367,7 +349,7 @@ def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwarg
                     for item in router.text_embeddings
                 ]
                 print(
-                    f"[parity-unified] encoded {len(raw_embeds)} "
+                    f"[sceneshifter] encoded {len(raw_embeds)} "
                     f"{getattr(router, 'backend', 'Wan')} prompts "
                     f"in one T5 batch {dims}",
                     flush=True,
@@ -387,26 +369,17 @@ def _record_official_text_encode(router: Any, encode_fn, texts, out, args, kwarg
         if embeds and all(_is_text_embed(item) for item in embeds):
             router.set_text_embeddings(embeds)
             from sceneshifter.adapters.base import project_router_text_embeddings
-            from sceneshifter.parity.trace import trace_tensor
 
             project_router_text_embeddings(router)
-            for index, item in enumerate(router.text_embeddings):
-                trace_tensor(
-                    "segment_text",
-                    item,
-                    backend=getattr(router, "backend", None),
-                    segment=index,
-                    source="official T5 single",
-                )
             dims = [tuple(t.shape) if hasattr(t, "shape") else None for t in router.text_embeddings]
             print(
-                f"[parity-unified] encoded {len(embeds)} segment prompts on single-prompt T5 {dims}",
+                f"[sceneshifter] encoded {len(embeds)} segment prompts on single-prompt T5 {dims}",
                 flush=True,
             )
         return
     if getattr(router, "null_text_embeddings", None) is None:
         router.null_text_embeddings = _unwrap_prompt_embed(out)
-        print("[parity-unified] captured official null from single-prompt T5", flush=True)
+        print("[sceneshifter] captured official null from single-prompt T5", flush=True)
 
 
 class _TextEncoderProxy:
@@ -480,9 +453,9 @@ def _offload_dit_before_vae(pipeline: Any) -> None:
                 continue
             try:
                 module.cpu()
-                print(f"[parity-unified] offloaded {attr} before VAE decode", flush=True)
+                print(f"[sceneshifter] offloaded {attr} before VAE decode", flush=True)
             except Exception as exc:  # noqa: BLE001
-                print(f"[parity-unified] {attr} cpu skip: {exc}", flush=True)
+                print(f"[sceneshifter] {attr} cpu skip: {exc}", flush=True)
         try:
             torch.cuda.empty_cache()
         except Exception:
@@ -526,14 +499,14 @@ def _wrap_named_classes(
                     _offload_dit_before_vae(self)
                 except Exception as exc:  # noqa: BLE001
                     print(
-                        f"[parity-unified] inject after {class_name}.__init__ failed: {exc}",
+                        f"[sceneshifter] inject after {class_name}.__init__ failed: {exc}",
                         flush=True,
                     )
 
             return wrapped
 
         cls.__init__ = make_init(original_init, name)
-        print(f"[parity-unified] wrapped {mod.__name__}.{name}.__init__", flush=True)
+        print(f"[sceneshifter] wrapped {mod.__name__}.{name}.__init__", flush=True)
 
 
 def _wrap_create_pipeline(mod: Any, router: Any, adapter: str, routing: Dict[str, Any]) -> None:
@@ -556,7 +529,7 @@ def _wrap_create_pipeline(mod: Any, router: Any, adapter: str, routing: Dict[str
 def _filter_official_argv(mod: Any, argv: List[str]) -> List[str]:
     """Validate flags before invoking an official parser.
 
-    Silently dropping a parity flag changes the generation contract while still
+    Silently dropping a generation flag changes the generation contract while still
     producing a plausible video. Sidecar-only options must be consumed before
     this function; every remaining flag is required to exist in the official
     entrypoint.
@@ -575,7 +548,7 @@ def _filter_official_argv(mod: Any, argv: List[str]) -> List[str]:
             if key not in blob:
                 raise RuntimeError(
                     f"official entrypoint {getattr(mod, '__file__', mod)!r} "
-                    f"does not declare required parity flag {key}"
+                    f"does not declare required flag {key}"
                 )
         filtered.append(tok)
         i += 1
@@ -694,22 +667,22 @@ def _install_talking_official_decode_fixes(adapter: str) -> None:
         import wan.multitalk as talking  # type: ignore
         import wan.utils.multitalk_utils as talking_utils  # type: ignore
     except Exception as exc:  # noqa: BLE001
-        print(f"[parity-unified] talking decode-fix import skip: {exc}", flush=True)
+        print(f"[sceneshifter] talking decode-fix import skip: {exc}", flush=True)
         return
     n_color = disable_talking_color_correction(talking_utils, talking)
     print(
-        f"[parity-unified] disabled official color correction on {n_color} bindings",
+        f"[sceneshifter] disabled official color correction on {n_color} bindings",
         flush=True,
     )
     if adapter != "infinitetalk":
         return
     cls = getattr(talking, "InfiniteTalkPipeline", None)
     if cls is None:
-        print("[parity-unified] InfiniteTalkPipeline missing; skip first-clip pin", flush=True)
+        print("[sceneshifter] InfiniteTalkPipeline missing; skip first-clip pin", flush=True)
         return
     n_pin = install_infinitetalk_first_clip_pin_disable(cls)
     print(
-        f"[parity-unified] removed {n_pin} official InfiniteTalk first-clip latent pins",
+        f"[sceneshifter] removed {n_pin} official InfiniteTalk first-clip latent pins",
         flush=True,
     )
 
@@ -719,11 +692,11 @@ def _install_multitalk_wav2vec_eager() -> None:
     try:
         from src.audio_analysis.wav2vec2 import Wav2Vec2Model
     except Exception as exc:  # noqa: BLE001
-        print(f"[parity-unified] wav2vec eager patch skipped: {exc}", flush=True)
+        print(f"[sceneshifter] wav2vec eager patch skipped: {exc}", flush=True)
         return
     current = Wav2Vec2Model.from_pretrained
     if getattr(current, "_ss_force_eager", False):
-        print("[parity-unified] multitalk wav2vec attn_implementation=eager", flush=True)
+        print("[sceneshifter] multitalk wav2vec attn_implementation=eager", flush=True)
         return
 
     def from_pretrained(*args: Any, **kwargs: Any):
@@ -732,7 +705,7 @@ def _install_multitalk_wav2vec_eager() -> None:
 
     from_pretrained._ss_force_eager = True  # type: ignore[attr-defined]
     Wav2Vec2Model.from_pretrained = from_pretrained  # type: ignore[method-assign]
-    print("[parity-unified] multitalk wav2vec attn_implementation=eager", flush=True)
+    print("[sceneshifter] multitalk wav2vec attn_implementation=eager", flush=True)
 
 
 def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None:
@@ -746,7 +719,7 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     except Exception:
         patch_h, patch_w = 32, 48
     router = _create_router(cfg, routing, patch_h=patch_h, patch_w=patch_w)
-    print(f"[parity-unified] talking router tokens {patch_h}x{patch_w}", flush=True)
+    print(f"[sceneshifter] talking router tokens {patch_h}x{patch_w}", flush=True)
     _push_path(official)
     os.chdir(official)
     script = unified.get("official_script", "generate_multitalk.py")
@@ -770,14 +743,17 @@ def run_talking_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
             routing,
         )
     except Exception as exc:  # noqa: BLE001
-        print(f"[parity-unified] wan class wrap skip: {exc}", flush=True)
+        print(f"[sceneshifter] wan class wrap skip: {exc}", flush=True)
 
-    save = out_dir / "videos" / f"{cfg['sample_id']}_sceneshifter"
+    save = out_dir / "videos" / str(cfg["sample_id"])
     save.parent.mkdir(parents=True, exist_ok=True)
+    audio_dir = out_dir / "audio" / str(cfg["sample_id"])
+    audio_dir.mkdir(parents=True, exist_ok=True)
     argv = [
         "--ckpt_dir", str(unified["ckpt_dir"]),
         "--wav2vec_dir", str(unified["wav2vec_dir"]),
         "--input_json", str(input_json),
+        "--audio_save_dir", str(audio_dir),
         "--base_seed", str(unified.get("base_seed", 43)),
         "--save_file", str(save),
         "--offload_model", "True",
@@ -823,7 +799,7 @@ def _maybe_gate_talking_audio_cfg(
     for module in audio_modules:
         module._ss_audio_start_timestep = audio_start
     print(
-        f"[parity-unified] talking audio residual gated on "
+        f"[sceneshifter] talking audio residual gated on "
         f"{len(audio_modules)} modules until step {audio_start}",
         flush=True,
     )
@@ -878,7 +854,7 @@ def _install_talking_audio_cfg_gate(dit: Any, audio_start: int) -> None:
     dit.forward = types.MethodType(forward, dit)
     dit._ss_talking_audio_cfg_gated = True
     print(
-        f"[parity-unified] talking audio CFG gated: reuse drop_text as uncond until step {int(audio_start)}",
+        f"[sceneshifter] talking audio CFG gated: reuse drop_text as uncond until step {int(audio_start)}",
         flush=True,
     )
 
@@ -931,7 +907,7 @@ def _install_fantasy_audio_cfg_gate(dit: Any, audio_start: int) -> None:
     dit.forward = types.MethodType(forward, dit)
     dit._ss_fantasy_audio_cfg_gated = True
     print(
-        f"[parity-unified] fantasy audio CFG gated: 2-pass until step {int(audio_start)}",
+        f"[sceneshifter] fantasy audio CFG gated: 2-pass until step {int(audio_start)}",
         flush=True,
     )
 
@@ -953,15 +929,15 @@ def _mux_fantasy_audio(video_mp4: Path, audio_path: str, dest: Path) -> None:
             "-shortest",
             str(dest),
         ]
-        print(f"[parity-unified] mux {' '.join(cmd)}", flush=True)
+        print(f"[sceneshifter] mux {' '.join(cmd)}", flush=True)
         try:
             subprocess.check_call(cmd)
             video_mp4.unlink(missing_ok=True)
             return
         except (OSError, subprocess.CalledProcessError) as exc:
-            print(f"[parity-unified] ffmpeg mux failed: {exc}", flush=True)
+            print(f"[sceneshifter] ffmpeg mux failed: {exc}", flush=True)
     else:
-        print(f"[parity-unified] ffmpeg missing at {ffmpeg}; keeping video-only", flush=True)
+        print(f"[sceneshifter] ffmpeg missing at {ffmpeg}; keeping video-only", flush=True)
     shutil.copy2(video_mp4, dest)
 
 
@@ -987,7 +963,7 @@ def _resize_fantasy_image(image_path: str, image_size: Any):
         key=lambda item: abs(ratio - float(item[1][0]) / float(item[1][1])),
     )
     print(
-        f"[parity-unified] Fantasy auto bucket {label} -> {width}x{height}",
+        f"[sceneshifter] Fantasy auto bucket {label} -> {width}x{height}",
         flush=True,
     )
     return image.resize((width, height), Image.LANCZOS)
@@ -1046,7 +1022,7 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     width, height = image.size
     router = _create_router(cfg, routing, patch_h=max(1, height // 16), patch_w=max(1, width // 16))
     print(
-        f"[parity-unified] fantasytalking router spatial={height}//16 x {width}//16 "
+        f"[sceneshifter] fantasytalking router spatial={height}//16 x {width}//16 "
         f"-> {height // 16}x{width // 16}",
         flush=True,
     )
@@ -1060,7 +1036,7 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     try:
         _capture_null_context(pipe, router)
     except Exception as exc:  # noqa: BLE001
-        print(f"[parity-unified] capture skip: {exc}", flush=True)
+        print(f"[sceneshifter] capture skip: {exc}", flush=True)
     torch.cuda.empty_cache()
     audio_proj_fea = fantasytalking.get_proj_fea(audio_wav2vec_fea)
     pos_idx_ranges = fantasytalking.split_audio_sequence(audio_proj_fea.size(1), num_frames=num_frames)
@@ -1085,7 +1061,7 @@ def run_fantasy_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
         audio_context_lens=audio_context_lens,
         latents_num_frames=(num_frames - 1) // 4 + 1,
     )
-    save = out_dir / "videos" / f"{cfg['sample_id']}_sceneshifter.mp4"
+    save = out_dir / "videos" / f"{cfg['sample_id']}.mp4"
     save.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_dir / "videos" / f"tmp_{cfg['sample_id']}.mp4"
     save_video(video, str(tmp), fps=fps, quality=5)
@@ -1119,7 +1095,7 @@ def run_s2v_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
             "wan_s2v",
         )
     except Exception as exc:  # noqa: BLE001
-        print(f"[parity-unified] wan s2v wrap skip: {exc}", flush=True)
+        print(f"[sceneshifter] wan s2v wrap skip: {exc}", flush=True)
 
     image = _resolve_media(root, meta.get("cond_image"))
     audio = meta.get("cond_audio")
@@ -1127,7 +1103,7 @@ def run_s2v_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
         audio = next(iter(audio.values()))
     audio = _resolve_media(root, audio)
     prompt = meta.get("prompt") or routing.get("segment_prompts", [""])[0]
-    save = out_dir / "videos" / f"{cfg['sample_id']}_sceneshifter.mp4"
+    save = out_dir / "videos" / f"{cfg['sample_id']}.mp4"
     save.parent.mkdir(parents=True, exist_ok=True)
     argv = [
         "--task", "s2v-14B",
@@ -1161,9 +1137,9 @@ def run_animate_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
         _install_animate_prompt_forwarding(wan, unified.get("prompt", ""))
         _wrap_named_classes(wan, ["WanAnimate", "WanI2V", "WanT2V"], router, "wan_animate")
     except Exception as exc:  # noqa: BLE001
-        print(f"[parity-unified] wan animate wrap skip: {exc}", flush=True)
+        print(f"[sceneshifter] wan animate wrap skip: {exc}", flush=True)
 
-    save = out_dir / "videos" / f"{cfg['sample_id']}_sceneshifter.mp4"
+    save = out_dir / "videos" / f"{cfg['sample_id']}.mp4"
     save.parent.mkdir(parents=True, exist_ok=True)
     argv = [
         "--task", "animate-14B",
@@ -1370,7 +1346,7 @@ def run_fun_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> None
             clip_image=clip_image,
             shift=int(unified.get("shift", 3)),
         ).videos
-    save = out_dir / "videos" / f"{cfg['sample_id']}_sceneshifter.mp4"
+    save = out_dir / "videos" / f"{cfg['sample_id']}.mp4"
     save.parent.mkdir(parents=True, exist_ok=True)
     save_videos_grid(video, str(save), fps=16)
 
@@ -1432,7 +1408,7 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     from sceneshifter.adapters.hunyuan_avatar import hunyuan_multiface_mask
 
     hunyuan_inference.get_facemask = hunyuan_multiface_mask
-    print("[parity-unified] Hunyuan multi-face union mask enabled", flush=True)
+    print("[sceneshifter] Hunyuan multi-face union mask enabled", flush=True)
 
     image = _resolve_media(root, meta.get("cond_image"))
     audio = meta.get("cond_audio")
@@ -1482,7 +1458,7 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     install_hunyuan_prompt_routing(sampler.pipeline, router, routing, meta)
     bound = _inject(sampler, router, "hunyuan_avatar")
     print(
-        f"[parity-unified] hunyuan bound {len(bound)} MMDiT blocks "
+        f"[sceneshifter] hunyuan bound {len(bound)} MMDiT blocks "
         f"target={target_h}x{target_w}",
         flush=True,
     )
@@ -1495,7 +1471,8 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     detector_path = os.path.join(unified["model_base"], "ckpts", "det_align", "detface.pt")
     align_instance = AlignImage("cuda", det_path=detector_path)
 
-    csv_path = out_dir / "task.csv"
+    csv_path = out_dir / "tasks" / f"{cfg['sample_id']}.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
     with open(csv_path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=["videoid", "image", "audio", "prompt", "fps"])
         writer.writeheader()
@@ -1530,7 +1507,7 @@ def run_hunyuan_official(cfg: Dict[str, Any], out_dir: Path, official: Path) -> 
     video = rearrange(sample[:, :frame_count], "c f h w -> f h w c")
     video = (video * 255.0).clamp(0, 255).cpu().numpy().astype(np.uint8)
     raw_path = save_dir / f"{cfg['sample_id']}.video-only.mp4"
-    output_path = save_dir / f"{cfg['sample_id']}_audio.mp4"
+    output_path = save_dir / f"{cfg['sample_id']}.mp4"
     imageio.mimsave(raw_path, video, fps=25.0)
     subprocess.run(
         [

@@ -14,15 +14,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from sceneshifter.parity.common import (  # noqa: E402
+from sceneshifter.common import (  # noqa: E402
     apply_demo_config,
     find_videos,
     git_head,
-    load_parity_config,
+    load_backbone_config,
     repo_root,
     write_run_args,
 )
-from sceneshifter.parity.unified import resolve_official_root, run_unified  # noqa: E402
+from sceneshifter.unified import resolve_official_root, run_unified  # noqa: E402
 
 BACKBONES = [
     "multitalk",
@@ -77,7 +77,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    cfg = apply_demo_config(load_parity_config(args.backbone), args.demo)
+    cfg = apply_demo_config(load_backbone_config(args.backbone), args.demo)
     out_dir = _output_dir(args.backbone, args.output_root)
     os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
