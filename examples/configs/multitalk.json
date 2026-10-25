@@ -74,17 +74,17 @@
       }
     ],
     "background_mask_path": {
-      "0": "background_masks/023_standing_3_4_0_bg_mask.npy"
+      "0": "masks/023_standing_3_4_0_bg_mask.npy"
     },
     "head_mask_path": {
-      "0": "background_masks_head_aug/023_standing_3_4_0_head_bg_mask.npy"
+      "0": "head_masks_augmented/023_standing_3_4_0_head_bg_mask.npy"
     },
     "input_mask_cover_original": false,
     "input_mask_cover_head_only": false
   },
-  "cond_image": "v12_final/023_standing_3_4_0.jpg",
+  "cond_image": "images/023_standing_3_4_0.jpg",
   "cond_audio": {
-    "person1": "SceneShifter_audios/RD_Radio45_000.wav"
+    "person1": "audios/RD_Radio45_000.wav"
   },
   "prompt": "The woman walks along the sidewalk in outdoor urban street, speaking to the camera."
 }

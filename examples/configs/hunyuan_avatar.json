@@ -108,12 +108,12 @@
       }
     ],
     "background_mask_path": {
-      "0": "background_masks/005_sitting_3_2_0_bg_mask.npy"
+      "0": "masks/005_sitting_3_2_0_bg_mask.npy"
     }
   },
-  "cond_image": "v12_final/005_sitting_3_2_0.jpg",
+  "cond_image": "images/005_sitting_3_2_0.jpg",
   "cond_audio": {
-    "person1": "SceneShifter_audios/RD_Radio1_000.wav"
+    "person1": "audios/RD_Radio1_000.wav"
   },
   "prompt": "The woman stands up and walks along the aisle in independent bookstore, speaking to the camera.",
   "common_prompt": "The woman speaks to the camera."

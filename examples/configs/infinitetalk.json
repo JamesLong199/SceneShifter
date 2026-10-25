@@ -118,20 +118,20 @@
       }
     ],
     "background_mask_path": {
-      "0": "background_masks/159_standing_1_1_0_sub0_bg_mask.npy",
-      "1": "background_masks/159_standing_1_1_0_sub1_bg_mask.npy"
+      "0": "masks/159_standing_1_1_0_sub0_bg_mask.npy",
+      "1": "masks/159_standing_1_1_0_sub1_bg_mask.npy"
     },
     "head_mask_path": {
-      "0": "background_masks_head_aug/159_standing_1_1_0_sub0_head_bg_mask.npy",
-      "1": "background_masks_head_aug/159_standing_1_1_0_sub1_head_bg_mask.npy"
+      "0": "head_masks_augmented/159_standing_1_1_0_sub0_head_bg_mask.npy",
+      "1": "head_masks_augmented/159_standing_1_1_0_sub1_head_bg_mask.npy"
     },
     "input_mask_cover_original": false,
     "input_mask_cover_head_only": false
   },
-  "cond_image": "v12_final/159_standing_1_1_0.jpg",
+  "cond_image": "images/159_standing_1_1_0.jpg",
   "cond_audio": {
-    "person1": "SceneShifter_audios/WRA_CarlyFiorina0_000.wav",
-    "person2": "SceneShifter_audios/WRA_CarlyFiorina0_000.wav"
+    "person1": "audios/WRA_CarlyFiorina0_000.wav",
+    "person2": "audios/WRA_CarlyFiorina0_000.wav"
   },
   "prompt": "The woman and the man walk along the corridor in covered outdoor walkway, speaking to the camera.",
   "audio_type": "para"

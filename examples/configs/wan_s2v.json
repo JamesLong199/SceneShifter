@@ -118,20 +118,20 @@
       }
     ],
     "background_mask_path": {
-      "0": "background_masks/032_sitting_3_2_0_sub0_bg_mask.npy",
-      "1": "background_masks/032_sitting_3_2_0_sub1_bg_mask.npy"
+      "0": "masks/032_sitting_3_2_0_sub0_bg_mask.npy",
+      "1": "masks/032_sitting_3_2_0_sub1_bg_mask.npy"
     },
     "head_mask_path": {
-      "0": "background_masks_head_aug/032_sitting_3_2_0_sub0_head_bg_mask.npy",
-      "1": "background_masks_head_aug/032_sitting_3_2_0_sub1_head_bg_mask.npy"
+      "0": "head_masks_augmented/032_sitting_3_2_0_sub0_head_bg_mask.npy",
+      "1": "head_masks_augmented/032_sitting_3_2_0_sub1_head_bg_mask.npy"
     },
     "input_mask_cover_original": false,
     "input_mask_cover_head_only": false
   },
-  "cond_image": "v12_final/032_sitting_3_2_0.jpg",
+  "cond_image": "images/032_sitting_3_2_0.jpg",
   "cond_audio": {
-    "person1": "SceneShifter_audios/RD_Radio54_000.wav",
-    "person2": "SceneShifter_audios/RD_Radio54_000.wav"
+    "person1": "audios/RD_Radio54_000.wav",
+    "person2": "audios/RD_Radio54_000.wav"
   },
   "prompt": "The woman and the man stand up and walk along the courtyard in outdoor courtyard, speaking to the camera.",
   "audio_type": "para"

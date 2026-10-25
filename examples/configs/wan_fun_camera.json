@@ -178,12 +178,12 @@
       }
     ],
     "background_mask_path": {
-      "0": "background_masks/071_standing_3_4_0_sub0_bg_mask.npy",
-      "1": "background_masks/071_standing_3_4_0_sub1_bg_mask.npy"
+      "0": "masks/071_standing_3_4_0_sub0_bg_mask.npy",
+      "1": "masks/071_standing_3_4_0_sub1_bg_mask.npy"
     },
     "head_mask_path": {
-      "0": "background_masks_head_aug/071_standing_3_4_0_sub0_head_bg_mask.npy",
-      "1": "background_masks_head_aug/071_standing_3_4_0_sub1_head_bg_mask.npy"
+      "0": "head_masks_augmented/071_standing_3_4_0_sub0_head_bg_mask.npy",
+      "1": "head_masks_augmented/071_standing_3_4_0_sub1_head_bg_mask.npy"
     },
     "input_mask_cover_original": true,
     "input_mask_cover_head_only": true,
@@ -194,10 +194,10 @@
       39
     ]
   },
-  "cond_image": "v12_final/071_standing_3_4_0.jpg",
+  "cond_image": "images/071_standing_3_4_0.jpg",
   "cond_audio": {
-    "person1": "SceneShifter_audios/WDA_DianneFeinstein_000.wav",
-    "person2": "SceneShifter_audios/WDA_DianneFeinstein_000.wav"
+    "person1": "audios/WDA_DianneFeinstein_000.wav",
+    "person2": "audios/WDA_DianneFeinstein_000.wav"
   },
   "prompt": "The woman and the man walk along an aisle in indoor supermarket, speaking to the camera.",
   "audio_type": "para"
