@@ -1,0 +1,9 @@
+configs/
+images/
+audios/
+masks/
+checkpoints/
+vbench/
+vbench2/
+sam3/
+results/

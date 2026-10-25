@@ -321,12 +321,16 @@ The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or Hu
 ```bash
 python scripts/batch_generate.py \
   --backbone multitalk \
-  --dataset_root /path/to/SceneShifter_dataset \
-  --metadata_glob 'ablations/metadata_jsons/*_metadata.json' \
+  --dataset_root SceneShifterBench \
+  --metadata_glob 'configs/sceneshifter_multitalk/*_metadata.json' \
   --output_root outputs/batch/multitalk \
   --gpus 0,1
 ```
 
-Add `--no_inject` to run the unmodified attention path for MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or HunyuanVideo-Avatar.
+Add `--no_inject` to run the unmodified attention path for MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or HunyuanVideo-Avatar. Point `--metadata_glob` at `configs/base_model_wan/` or `configs/base_model_hunyuan/` for those base-model runs.
 
 `--dry_run` checks that each metadata file's image, audio, and masks exist. `--ids 023,032` or `--start_id` and `--end_id` limit the clips.
+
+## SceneShifterBench
+
+Evaluation scripts, the 150-id dataset layout, and the checkpoint download steps are in [SceneShifterBench/README.md](SceneShifterBench/README.md). Unzip the dataset into `SceneShifterBench/` before batch generation or evaluation.
