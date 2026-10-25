@@ -645,7 +645,6 @@ def _score_background_alignment_vbench2_style(
         "IMPORTANT: Focus only on the environment/background. Ignore the person/subject, faces, clothing, and actions."
     )
     presence_answers: List[Dict[str, Any]] = []
-    present_map: Dict[str, bool] = {}
     yes_cnt = 0
     for item in q["part1_presence"]:
         gt_item = str(item["gt_item"])
@@ -663,7 +662,6 @@ def _score_background_alignment_vbench2_style(
         )
         parsed = _parse_yes_no(resp)
         ok = parsed is True
-        present_map[gt_item] = bool(ok)
         if ok:
             yes_cnt += 1
         presence_answers.append({"gt_item": gt_item, "question": question, "answer": resp, "parsed": parsed, "ok": ok})
@@ -1271,7 +1269,7 @@ def main() -> None:
             if isinstance(v, dict) and isinstance(v.get("averages"), dict)
             for mode in v["averages"].keys()
         }
-        or set(modes_to_eval)
+        or {"all_frames"}
     )
     for mode in summary_modes:
         bg_p = _collect("background_semantics_presence", mode)
