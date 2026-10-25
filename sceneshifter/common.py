@@ -13,7 +13,7 @@ def repo_root() -> Path:
 
 
 def load_backbone_config(backbone: str) -> Dict[str, Any]:
-    path = repo_root() / "configs" / "parity" / f"{backbone}.json"
+    path = repo_root() / "backbone_configs" / f"{backbone}.json"
     if not path.is_file():
         raise FileNotFoundError(f"missing backbone config {path}")
     return json.loads(path.read_text())
@@ -103,7 +103,7 @@ def resolve_metadata(cfg: Dict[str, Any]) -> Path:
     meta = Path(cfg["metadata"])
     if meta.is_absolute():
         return meta
-    if str(meta).startswith("configs/"):
+    if str(meta).startswith("backbone_configs/"):
         return repo_root() / meta
     return Path(cfg.get("dataset_root") or (repo_root() / "examples")) / meta
 
