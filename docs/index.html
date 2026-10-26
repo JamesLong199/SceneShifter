@@ -28,7 +28,7 @@
     <div class="affiliations">
       <sup>1</sup>The University of Sydney, New South Wales, Australia<br>
       <sup>2</sup>Generative AI Lab, College of Computing and Data Science, Nanyang Technological University, Singapore<br>
-      <sup>3</sup>University of Wisconsin–Madison, Wisconsin, USA
+      <sup>3</sup>University of Wisconsin–Madison, Wisconsin, United States
     </div>
     <div class="author-note">*Corresponding authors</div>
     <div class="publication-links">
@@ -79,7 +79,7 @@
     </figure>
     <div class="prose">
       <p>
-        The same reference image and prompt ask the background to change from a covered walkway to a cozy indoor café. Seed 15 stays in the walkway for the whole clip. Seed 14 reaches the café, and the subject’s face, pose, and position change with the room. Seed 42 reaches the café and keeps the same person. The attention maps show the pattern behind that split. Background tokens need to stop attending across the scene cut, while foreground tokens in the new scene still attend to foreground tokens from the previous scene. SceneShifter makes that split explicit in self-attention.
+        With identical inputs, outcomes vary: Seed 15 keeps the walkway background; Seed 14 changes to the café but alters the subject; Seed 42 changes the background while preserving the subject. The attention maps reveal the pattern behind successful transitions: suppress cross-scene BG-to-BG attention while retaining FG-to-FG attention from the preceding scene. SceneShifter enforces this split explicitly.
       </p>
     </div>
 
@@ -88,11 +88,11 @@
         <img src="static/images/fig2_mask_comparison.png" alt="A woman stands up from a squat in a parking garage. Averaged attention masks cover both the squat and the standing pose. Masks from selected attention components follow the body.">
         <img src="static/images/fig2_mask_iou.png" alt="Heatmap of mask IoU over attention layers and heads. Accuracy varies widely across heads.">
       </div>
-      <figcaption class="figcaption">Figure 2. Foreground localization under large motion. Left: reference-to-video attention and binary masks. Right: mask IoU by layer and head</figcaption>
+      <figcaption class="figcaption">Figure 2. Foreground localization under large motion</figcaption>
     </figure>
     <div class="prose">
       <p>
-        Guidance needs a mask that follows the subject. On this large-motion clip, averaging reference-to-video attention across every head in a layer (Avg) leaves the mask covering both the early squat and the later standing pose. Heads differ sharply: some track the body, and others stay on the reference position or the background. The IoU heatmap makes that spread visible across layers and heads. SceneShifter reads the dynamic foreground mask from the self-attention components that follow the trajectory, and uses that mask to separate background cuts from subject continuity.
+        Averaging attention across all heads can produce masks covering both the subject’s earlier and current positions. Since localization quality varies by head, SceneShifter averages selected heads with high FG/BG IoU to produce dynamic masks that follow the subject and reduce background leakage.
       </p>
     </div>
   </div>
@@ -107,7 +107,7 @@
     </figure>
     <div class="prose">
       <p>
-        SceneShifter takes a reference image, speech audio, a scene-cut time, and a text prompt for each scene. The reference image is encoded into the video latent. Self-attention then splits into two paths. Foreground motion localization reads a subject mask from the attention heads that follow the body, including when the pose changes from a squat to standing. Semantic-aware temporal decoupling uses that mask and the scene cut so background keys stay inside each scene, while foreground keys continue across the cut. Each scene keeps its own text prompt, and audio attention keeps the speech aligned. The decoder writes one clip: the background changes at the scheduled frame, and the same person continues through it.
+        SceneShifter takes a reference image, speech audio, per-scene prompts, and user-specified cut times. Selected attention heads estimate dynamic foreground masks. At each cut, SceneShifter suppresses cross-scene background attention while preserving foreground attention across scenes, enabling background changes without disrupting subject continuity. Text cross-attention applies each scene's text prompt to the corresponding video segment. The speech audio conditions the animation across all scenes.
       </p>
     </div>
   </div>

@@ -4,7 +4,7 @@
 
 <sup>1</sup> The University of Sydney, New South Wales, Australia  
 <sup>2</sup> Generative AI Lab, College of Computing and Data Science, Nanyang Technological University, Singapore, Singapore  
-<sup>3</sup> University of Wisconsin–Madison, Wisconsin, USA
+<sup>3</sup> University of Wisconsin–Madison, Wisconsin, United States
 
 ✉ Corresponding authors
 
