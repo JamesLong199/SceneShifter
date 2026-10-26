@@ -41,9 +41,9 @@ huggingface-cli download google/siglip-so400m-patch14-384 \
 
 ## Environment Installation
 
-Create one conda environment for each scorer.
+SceneShifterBench uses separate environments for different evaluation metrics.
 
-| Variable | Environment | Role |
+| Variable | Environment | Metrics |
 |---|---|---|
 | `ENV_LIPSYNC` | `sceneshifter_multitalk` | Temporal accuracy and lip sync |
 | `ENV_SAM3` | `sam3` | Spatial subject consistency |
@@ -105,7 +105,7 @@ git clone https://github.com/facebookresearch/dino \
 
 ## Test on SceneShifterBench
 
-Export the scorer environment names.
+Export environment names.
 
 ```bash
 export ENV_LIPSYNC=sceneshifter_multitalk
@@ -114,50 +114,42 @@ export ENV_VBENCH=vbench
 export ENV_VBENCH2=vbench2
 ```
 
-The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, WanS2V, or HunyuanVideo-Avatar over a metadata folder. One process is started per GPU. A clip is skipped when `videos/<id>.mp4` is already in the output folder.
+The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, WanS2V, or HunyuanVideo-Avatar over a metadata folder. `--gpus` takes a comma-separated list of GPU ids, and one process is started for each id. A clip is skipped when `videos/<id>.mp4` is already in the output folder.
 
 | Backbone | Command |
 |---|---|
-| MultiTalk | `conda activate sceneshifter_multitalk && python scripts/batch_generate.py --backbone multitalk --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_multitalk/*_metadata.json' --output_root outputs/batch/multitalk --gpus 0,1` |
-| InfiniteTalk | `conda activate sceneshifter_multitalk && python scripts/batch_generate.py --backbone infinitetalk --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_infinitetalk/*_metadata.json' --output_root outputs/batch/infinitetalk --gpus 0,1` |
-| FantasyTalking | `conda activate sceneshifter_fantasy && python scripts/batch_generate.py --backbone fantasytalking --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_fantasytalking/*_metadata.json' --output_root outputs/batch/fantasytalking --gpus 0,1` |
-| WanS2V | `conda activate sceneshifter_wans2v && python scripts/batch_generate.py --backbone wan_s2v --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_wans2v/*_metadata.json' --output_root outputs/batch/wan_s2v --gpus 0,1` |
-| HunyuanVideo-Avatar | `conda activate sceneshifter_hunyuan && python scripts/batch_generate.py --backbone hunyuan_avatar --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_hunyuan/*_metadata.json' --output_root outputs/batch/hunyuan_avatar --gpus 0,1` |
+| MultiTalk | `conda activate sceneshifter_multitalk && python scripts/batch_generate.py --backbone multitalk --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_multitalk/*_metadata.json' --output_root outputs/batch/multitalk --gpus [AVAILABLE DEVICES]` |
+| InfiniteTalk | `conda activate sceneshifter_multitalk && python scripts/batch_generate.py --backbone infinitetalk --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_infinitetalk/*_metadata.json' --output_root outputs/batch/infinitetalk --gpus [AVAILABLE DEVICES]` |
+| FantasyTalking | `conda activate sceneshifter_fantasy && python scripts/batch_generate.py --backbone fantasytalking --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_fantasytalking/*_metadata.json' --output_root outputs/batch/fantasytalking --gpus [AVAILABLE DEVICES]` |
+| WanS2V | `conda activate sceneshifter_wans2v && python scripts/batch_generate.py --backbone wan_s2v --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_wans2v/*_metadata.json' --output_root outputs/batch/wan_s2v --gpus [AVAILABLE DEVICES]` |
+| HunyuanVideo-Avatar | `conda activate sceneshifter_hunyuan && python scripts/batch_generate.py --backbone hunyuan_avatar --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_hunyuan/*_metadata.json' --output_root outputs/batch/hunyuan_avatar --gpus [AVAILABLE DEVICES]` |
 
 ## Evaluate Generation Results
 
-Generated videos are `videos/{id}.mp4` inside the run directory. Run the commands below from the repository root. `--ids 023,032` and `--resume` limit or continue a run. Metric files are written inside the run directory.
-
-SceneShifter Wan-based models are MultiTalk, InfiniteTalk, FantasyTalking, and Wan2.2 S2V. These clips are 81 frames. Pass the matching config:
+Generated videos are `videos/{id}.mp4` inside the run directory. Run the command below from the repository root. The results are summarized in `evaluation_summary.json`.
 
 ```bash
 bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
-  outputs/batch/multitalk \
-  --config sceneshifter_multitalk
+  outputs/batch/[BACKBONE] \
+  --config [CONFIG]
 ```
 
-The other Wan-based configs are `sceneshifter_infinitetalk`, `sceneshifter_fantasytalking`, and `sceneshifter_wans2v`.
+### Wan-based Models
 
-SceneShifter HunyuanVideo-Avatar clips are 129 frames:
+| Method | Backbone | Config |
+|---|---|---|
+| SceneShifter | `multitalk` | `sceneshifter_multitalk` |
+| SceneShifter | `infinitetalk` | `sceneshifter_infinitetalk` |
+| SceneShifter | `fantasytalking` | `sceneshifter_fantasytalking` |
+| SceneShifter | `wan_s2v` | `sceneshifter_wans2v` |
+| Base | `multitalk` | `base_model_wan` |
+| Base | `infinitetalk` | `base_model_wan` |
+| Base | `fantasytalking` | `base_model_wan` |
+| Base | `wan_s2v` | `base_model_wan` |
 
-```bash
-bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
-  outputs/batch/hunyuan_avatar \
-  --config sceneshifter_hunyuan
-```
+### Hunyuan-based Models
 
-Base-model runs use a single prompt. Wan-based base runs (MultiTalk, InfiniteTalk, FantasyTalking, and Wan2.2 S2V) use `base_model_wan`:
-
-```bash
-bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
-  outputs/batch_base/multitalk \
-  --config base_model_wan
-```
-
-The HunyuanVideo-Avatar base run uses `base_model_hunyuan`:
-
-```bash
-bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
-  outputs/batch_base/hunyuan_avatar \
-  --config base_model_hunyuan
-```
+| Method | Backbone | Config |
+|---|---|---|
+| SceneShifter | `hunyuan_avatar` | `sceneshifter_hunyuan` |
+| Base | `hunyuan_avatar` | `base_model_hunyuan` |
