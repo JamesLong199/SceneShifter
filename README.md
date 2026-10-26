@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="PAPER_LINK"><img src="https://img.shields.io/badge/arXiv-Paper-red.svg" alt="arXiv"></a>
-  <a href="PROJECT_PAGE_LINK"><img src="https://img.shields.io/badge/Project-Page-blue.svg" alt="Project Page"></a>
+  <a href="https://jameslong199.github.io/SceneShifter/"><img src="https://img.shields.io/badge/Project-Page-blue.svg" alt="Project Page"></a>
 </p>
 
 ## Demo

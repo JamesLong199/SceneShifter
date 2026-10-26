@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SceneShifter: Training-free Multi-Scene Temporal Control for Audio-driven Human Animation</title>
+  <meta name="description" content="SceneShifter is a training-free framework for multi-scene temporal control in audio-driven human animation.">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Noto+Sans:400,600,700">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <link rel="stylesheet" href="static/css/index.css">
+</head>
+<body>
+
+<section class="hero">
+  <div class="wrap">
+    <h1 class="publication-title">SceneShifter: Training-free Multi-Scene Temporal Control for Audio-driven Human Animation</h1>
+    <div class="venue">NeurIPS 2026</div>
+    <div class="authors">
+      Jianzhi Long<sup>1</sup>,
+      Rong-Cheng Tu<sup>2*</sup>,
+      Hao Guan<sup>2</sup>,
+      Siyuan Liang<sup>2</sup>,<br>
+      Shunyu Liu<sup>2</sup>,
+      Xiao Luo<sup>3</sup>,
+      Dacheng Tao<sup>2*</sup>
+    </div>
+    <div class="affiliations">
+      <sup>1</sup>The University of Sydney, New South Wales, Australia<br>
+      <sup>2</sup>Generative AI Lab, College of Computing and Data Science, Nanyang Technological University, Singapore<br>
+      <sup>3</sup>University of Wisconsin–Madison, Wisconsin, USA
+    </div>
+    <div class="author-note">*Corresponding authors</div>
+    <div class="publication-links">
+      <!-- Replace the href with the abs URL once the preprint is on arXiv. -->
+      <a class="pub-link" href="https://arxiv.org/search/?query=SceneShifter+Training-free+Multi-Scene+Temporal+Control+for+Audio-driven+Human+Animation&amp;searchtype=all&amp;source=header" target="_blank" rel="noopener">
+        <i class="ai ai-arxiv icon" aria-hidden="true"></i>
+        <span>arXiv</span>
+      </a>
+      <a class="pub-link" href="https://github.com/JamesLong199/SceneShifter" target="_blank" rel="noopener">
+        <i class="fab fa-github icon" aria-hidden="true"></i>
+        <span>Code</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="demos">
+  <div class="wrap">
+    <div id="multitalk-gallery" class="gallery"></div>
+    <p class="caption">
+      <strong>SceneShifter</strong> generates audio-driven human animation on MultiTalk with background changes at specified segments.
+      The foreground subject keeps a consistent appearance and motion while each segment follows its own scene.
+    </p>
+  </div>
+</section>
+
+<section class="section" id="abstract">
+  <div class="wrap">
+    <h2>Abstract</h2>
+    <div class="prose">
+      <p>
+        Although audio-driven human animation has achieved impressive realism, it still lacks effective <strong>Multi-Scene Temporal Control</strong>: orchestrating background transitions at precise timestamps while preserving a coherent foreground subject. We show that this challenge stems from the diffusion transformer's self-attention mechanism, and addressing it requires two capabilities: (1) <strong>Semantic-Aware Temporal Decoupling</strong>, which isolates background attention across scenes while retaining cross-scene foreground attention for subject consistency; and (2) <strong>Foreground Motion Localization</strong>, which accurately tracks the foreground subject across latent frames, especially under large motion.
+        To address these challenges, we introduce <strong>SceneShifter</strong>, a training-free framework for precise multi-scene control in audio-driven human animation.
+        SceneShifter guides spatio-temporal self-attention by suppressing cross-scene attention among background tokens while preserving cross-scene attention among foreground tokens.
+        To support this guidance under large motion, SceneShifter extracts dynamic foreground masks from the self-attention layers and heads that best capture subject trajectories. We further introduce <strong>SceneShifterBench</strong>, a benchmark designed to evaluate scene-timing accuracy, foreground preservation, and visual quality under large motion and multiple subjects. Experiments show that SceneShifter achieves frame-level scene timing, strong subject preservation, and high visual quality, outperforming existing baselines.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="observations">
+  <div class="wrap">
+    <h2>Key Observations</h2>
+
+    <figure class="figure">
+      <img src="static/images/fig1_frame_comparison.png" alt="Three seeds of the same multi-scene prompt. Seed 15 stays in a covered walkway. Seed 14 changes to a café and also changes the subject. Seed 42 changes to the café while keeping the subject. Attention maps show background and foreground patterns.">
+      <figcaption class="figcaption">Figure 1. Same reference image and multi-scene prompt, three random seeds</figcaption>
+    </figure>
+    <div class="prose">
+      <p>
+        The same reference image and prompt ask the background to change from a covered walkway to a cozy indoor café. Seed 15 stays in the walkway for the whole clip. Seed 14 reaches the café, and the subject’s face, pose, and position change with the room. Seed 42 reaches the café and keeps the same person. The attention maps show the pattern behind that split. Background tokens need to stop attending across the scene cut, while foreground tokens in the new scene still attend to foreground tokens from the previous scene. SceneShifter makes that split explicit in self-attention.
+      </p>
+    </div>
+
+    <figure class="figure">
+      <div class="fig2-panels">
+        <img src="static/images/fig2_mask_comparison.png" alt="A woman stands up from a squat in a parking garage. Averaged attention masks cover both the squat and the standing pose. Masks from selected attention components follow the body.">
+        <img src="static/images/fig2_mask_iou.png" alt="Heatmap of mask IoU over attention layers and heads. Accuracy varies widely across heads.">
+      </div>
+      <figcaption class="figcaption">Figure 2. Foreground localization under large motion. Left: reference-to-video attention and binary masks. Right: mask IoU by layer and head</figcaption>
+    </figure>
+    <div class="prose">
+      <p>
+        Guidance needs a mask that follows the subject. On this large-motion clip, averaging reference-to-video attention across every head in a layer (Avg) leaves the mask covering both the early squat and the later standing pose. Heads differ sharply: some track the body, and others stay on the reference position or the background. The IoU heatmap makes that spread visible across layers and heads. SceneShifter reads the dynamic foreground mask from the self-attention components that follow the trajectory, and uses that mask to separate background cuts from subject continuity.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="applications">
+  <div class="wrap">
+    <h2>More Applications</h2>
+
+    <h3>1. Video-driven Animation</h3>
+    <div class="prose">
+      <p>
+        On Wan-Animate, a driving video controls the subject’s gestures. SceneShifter keeps the person visually consistent across the scheduled backgrounds while the body follows that driving motion.
+      </p>
+    </div>
+    <div id="wan-animate-gallery" class="gallery"></div>
+
+    <h3 style="margin-top: 2.4rem;">2. Camera Control</h3>
+    <div class="prose">
+      <p>
+        On Wan2.1-Fun-Camera-Control, the same scene schedule runs together with a camera move. The examples below cover pan left, pan right, zoom out, clockwise, and anti-clockwise.
+      </p>
+    </div>
+    <div id="wan-camera-gallery" class="gallery"></div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="wrap">
+    Project page layout follows <a href="https://onevfall.github.io/project_page/ditctrl/">DiTCtrl</a>,
+    whose template is borrowed from <a href="https://nerfies.github.io/">Nerfies</a>.
+    This website is licensed under a
+    <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution-ShareAlike 4.0 International License</a>.
+  </div>
+</footer>
+
+<script>
+const GALLERIES = {
+  "multitalk-gallery": [
+    { action: "walk", alt: "urban street to library", src: "../assets/multitalk/023.gif", thumb: "static/thumbs/multitalk_023.jpg",
+      scenes: [
+        { name: "urban street" },
+        { name: "library", detail: "bookshelves and a study desk area with reading lamps" }
+      ]},
+    { action: "sit → stand", alt: "courtyard to rooftop terrace to parking garage", src: "../assets/multitalk/032.gif", thumb: "static/thumbs/multitalk_032.jpg",
+      scenes: [
+        { name: "courtyard" },
+        { name: "rooftop terrace", detail: "a rooftop deck with a safety railing and a distant city skyline" },
+        { name: "parking garage", detail: "painted concrete pillars, marked lanes, and open space" }
+      ]},
+    { action: "sit → stand", alt: "urban street to bus stop to hotel lobby to park to café", src: "../assets/multitalk/036.gif", thumb: "static/thumbs/multitalk_036.jpg",
+      scenes: [
+        { name: "urban street" },
+        { name: "bus stop", detail: "a simple shelter with a bench beside a city street" },
+        { name: "hotel lobby", detail: "lounge seating, a reception area in the distance, and polished stone flooring" },
+        { name: "park", detail: "a wide grassy area with a walking path and scattered trees" },
+        { name: "café", detail: "small tables, hanging pendant lights, and a casual, lived-in atmosphere" }
+      ]},
+    { action: "walk", alt: "parking garage to library to bus stop to conference hall", src: "../assets/multitalk/062.gif", thumb: "static/thumbs/multitalk_062.jpg",
+      scenes: [
+        { name: "parking garage" },
+        { name: "library", detail: "bookshelves and a study desk area with reading lamps" },
+        { name: "bus stop", detail: "a simple shelter with a bench beside a city street" },
+        { name: "conference hall", detail: "rows of conference chairs facing forward toward a stage and screen" }
+      ]},
+    { action: "stand → squat", alt: "classroom to elevator lobby to park to parking garage", src: "../assets/multitalk/063.gif", thumb: "static/thumbs/multitalk_063.jpg",
+      scenes: [
+        { name: "classroom" },
+        { name: "elevator lobby", detail: "polished floors, signage, and elevator doors" },
+        { name: "park", detail: "a wide grassy area with a walking path and scattered trees" },
+        { name: "parking garage", detail: "painted concrete pillars, marked lanes, and open space" }
+      ]},
+    { action: "squat → stand", alt: "parking garage to office", src: "../assets/multitalk/092.gif", thumb: "static/thumbs/multitalk_092.jpg",
+      scenes: [
+        { name: "parking garage" },
+        { name: "office", detail: "a clean workspace with a meeting table, laptops, and glass partitions" }
+      ]},
+    { action: "squat → stand", alt: "urban street to airport", src: "../assets/multitalk/104.gif", thumb: "static/thumbs/multitalk_104.jpg",
+      scenes: [
+        { name: "urban street" },
+        { name: "airport", detail: "a spacious concourse with gate signage, large windows, and clustered waiting-area seats" }
+      ]},
+    { action: "stand → sit", alt: "courtyard to airport", src: "../assets/multitalk/110.gif", thumb: "static/thumbs/multitalk_110.jpg",
+      scenes: [
+        { name: "courtyard" },
+        { name: "airport", detail: "a spacious concourse with gate signage, large windows, and clustered waiting-area seats" }
+      ]},
+    { action: "stand → squat", alt: "airport to supermarket to elevator lobby to parking garage to urban street", src: "../assets/multitalk/120.gif", thumb: "static/thumbs/multitalk_120.jpg",
+      scenes: [
+        { name: "airport" },
+        { name: "supermarket", detail: "tall shelves and clear aisle space with product displays" },
+        { name: "elevator lobby", detail: "polished floors, signage, and elevator doors" },
+        { name: "parking garage", detail: "painted concrete pillars, marked lanes, and open space" },
+        { name: "urban street", detail: "a paved sidewalk with shopfronts, street trees, and light foot traffic" }
+      ]},
+    { action: "sit → stand", alt: "café to parking garage", src: "../assets/multitalk/163.gif", thumb: "static/thumbs/multitalk_163.jpg",
+      scenes: [
+        { name: "café" },
+        { name: "parking garage", detail: "painted concrete pillars, marked lanes, and open space" }
+      ]},
+    { action: "sit → stand", alt: "classroom to conference hall", src: "../assets/multitalk/172.gif", thumb: "static/thumbs/multitalk_172.jpg",
+      scenes: [
+        { name: "classroom" },
+        { name: "conference hall", detail: "rows of conference chairs facing forward toward a stage and screen" }
+      ]}
+  ],
+  "wan-animate-gallery": [
+    { action: "walk", alt: "supermarket to conference hall to parking garage", src: "../assets/wan_animate/012.gif", thumb: "static/thumbs/wan_animate_012.jpg",
+      scenes: [
+        { name: "supermarket" },
+        { name: "conference hall", detail: "rows of conference chairs facing forward toward a stage and screen" },
+        { name: "parking garage", detail: "painted concrete pillars, marked lanes, and open space" }
+      ]},
+    { action: "stand → sit", alt: "hotel lobby to urban street", src: "../assets/wan_animate/047.gif", thumb: "static/thumbs/wan_animate_047.jpg",
+      scenes: [
+        { name: "hotel lobby" },
+        { name: "urban street", detail: "a paved sidewalk with shopfronts, street trees, and light foot traffic" }
+      ]},
+    { action: "walk", alt: "supermarket to podcast room to subway to courtyard", src: "../assets/wan_animate/051.gif", thumb: "static/thumbs/wan_animate_051.jpg",
+      scenes: [
+        { name: "supermarket" },
+        { name: "podcast room", detail: "acoustic panels, a small recording table, and neatly arranged audio gear" },
+        { name: "subway", detail: "a clean carriage with bench seating along both sides, vertical poles, and overhead route maps" },
+        { name: "courtyard", detail: "a paved courtyard with planters, benches, and a calm open-air feel" }
+      ]},
+    { action: "sit → stand", alt: "airport to courtyard to office", src: "../assets/wan_animate/099.gif", thumb: "static/thumbs/wan_animate_099.jpg",
+      scenes: [
+        { name: "airport" },
+        { name: "courtyard", detail: "a paved courtyard with planters, benches, and a calm open-air feel" },
+        { name: "office", detail: "a clean workspace with a meeting table, laptops, and glass partitions" }
+      ]},
+    { action: "stand → squat", alt: "hotel lobby to rooftop terrace to covered walkway to supermarket", src: "../assets/wan_animate/117.gif", thumb: "static/thumbs/wan_animate_117.jpg",
+      scenes: [
+        { name: "hotel lobby" },
+        { name: "rooftop terrace", detail: "a rooftop deck with a safety railing and a distant city skyline" },
+        { name: "covered walkway", detail: "a modern pedestrian corridor with repeating columns and clean lines" },
+        { name: "supermarket", detail: "tall shelves and clear aisle space with product displays" }
+      ]}
+  ],
+  "wan-camera-gallery": [
+    { camera: "Pan left", action: "walk", alt: "pan left, park to hospital", src: "../assets/wan_fun_camera/068_pan_left.gif", thumb: "static/thumbs/wan_fun_camera_068_pan_left.jpg",
+      scenes: [
+        { name: "park" },
+        { name: "hospital", detail: "aligned seating, clean signage, and a corridor in the background" }
+      ]},
+    { camera: "Pan right", action: "squat → stand", alt: "pan right, courtyard to elevator lobby to workshop", src: "../assets/wan_fun_camera/096_pan_right.gif", thumb: "static/thumbs/wan_fun_camera_096_pan_right.jpg",
+      scenes: [
+        { name: "courtyard" },
+        { name: "elevator lobby", detail: "polished floors, signage, and elevator doors" },
+        { name: "workshop", detail: "worktables, tools, and organized equipment" }
+      ]},
+    { camera: "Zoom out", action: "walk", alt: "zoom out, museum to parking garage", src: "../assets/wan_fun_camera/126_zoom_out.gif", thumb: "static/thumbs/wan_fun_camera_126_zoom_out.jpg",
+      scenes: [
+        { name: "museum" },
+        { name: "parking garage", detail: "painted concrete pillars, marked lanes, and open space" }
+      ]},
+    { camera: "Clockwise", action: "walk", alt: "clockwise, supermarket to conference hall to urban street to museum", src: "../assets/wan_fun_camera/071_clockwise.gif", thumb: "static/thumbs/wan_fun_camera_071_clockwise.jpg",
+      scenes: [
+        { name: "supermarket" },
+        { name: "conference hall", detail: "rows of conference chairs facing forward toward a stage and screen" },
+        { name: "urban street", detail: "a paved sidewalk with shopfronts, street trees, and light foot traffic" },
+        { name: "museum", detail: "white walls with framed artworks and a quiet polished floor" }
+      ]},
+    { camera: "Anti-clockwise", action: "stand", alt: "anti-clockwise, bus stop to train station to supermarket to beach", src: "../assets/wan_fun_camera/153_anti_clockwise.gif", thumb: "static/thumbs/wan_fun_camera_153_anti_clockwise.jpg",
+      scenes: [
+        { name: "bus stop", detail: "a simple shelter with a bench beside a city street" },
+        { name: "train station", detail: "wide concourse space with timetable boards and travelers in the distance" },
+        { name: "supermarket", detail: "tall shelves and clear aisle space with product displays" },
+        { name: "beach", detail: "railings, ocean views, and open sky" }
+      ]}
+  ]
+};
+
+function renderItem(root, item) {
+  const text = root.querySelector(".demo-text");
+  text.replaceChildren();
+  if (item.camera) {
+    const camera = document.createElement("div");
+    camera.className = "camera-line";
+    camera.textContent = item.camera;
+    text.appendChild(camera);
+  }
+  const actionLabel = document.createElement("div");
+  actionLabel.className = "field-label is-action";
+  actionLabel.textContent = "🎬 Action";
+  text.appendChild(actionLabel);
+  const action = document.createElement("div");
+  action.className = "action-line";
+  action.textContent = item.action;
+  text.appendChild(action);
+  const sceneLabel = document.createElement("div");
+  sceneLabel.className = "field-label is-scenes";
+  sceneLabel.textContent = "📍 Scenes";
+  text.appendChild(sceneLabel);
+  const scenes = document.createElement("div");
+  scenes.className = "scene-list";
+  item.scenes.forEach((scene, index) => {
+    const line = document.createElement("p");
+    line.className = "scene-line";
+    const name = document.createElement("span");
+    name.className = "scene-name";
+    name.textContent = (index + 1) + ". " + scene.name;
+    line.appendChild(name);
+    if (scene.detail) {
+      const detail = document.createElement("span");
+      detail.className = "scene-detail";
+      detail.textContent = " — " + scene.detail;
+      line.appendChild(detail);
+    }
+    scenes.appendChild(line);
+  });
+  text.appendChild(scenes);
+  const img = root.querySelector(".demo-video img");
+  img.alt = item.alt;
+  img.onerror = () => {
+    const remote = item.src.replace(
+      "../assets/",
+      "https://github.com/JamesLong199/SceneShifter/raw/main/assets/"
+    );
+    if (img.src !== remote) img.src = remote;
+  };
+  img.src = item.src;
+}
+
+function mountGallery(id, items) {
+  const root = document.getElementById(id);
+  root.innerHTML = `
+    <div class="demo-board">
+      <div class="demo-text"></div>
+      <div class="demo-video"><img alt=""></div>
+      <div class="col-label label-text">Input Text</div>
+      <div class="col-label label-video">Our Video</div>
+    </div>
+    <div class="thumb-row">
+      <div class="click-hint">Click here →</div>
+      <div class="thumbs"></div>
+    </div>`;
+  const thumbs = root.querySelector(".thumbs");
+  items.forEach((item, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "thumb" + (index === 0 ? " is-active" : "");
+    button.setAttribute("aria-label", item.alt);
+    const thumb = document.createElement("img");
+    thumb.src = item.thumb;
+    thumb.alt = "";
+    button.appendChild(thumb);
+    button.addEventListener("click", () => {
+      root.querySelectorAll(".thumb").forEach((el) => el.classList.remove("is-active"));
+      button.classList.add("is-active");
+      renderItem(root, item);
+    });
+    thumbs.appendChild(button);
+  });
+  renderItem(root, items[0]);
+}
+
+Object.entries(GALLERIES).forEach(([id, items]) => mountGallery(id, items));
+</script>
+</body>
+</html>
