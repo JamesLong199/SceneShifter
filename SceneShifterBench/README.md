@@ -126,18 +126,18 @@ conda activate [ENVIRONMENT] && python scripts/batch_generate.py \
   [EXTRA]
 ```
 
-| Method | Environment | Backbone | Config | Output root | Extra flags |
+| Method | Environment | Backbone | Config | Output | Extra flags |
 |---|---|---|---|---|---|
-| SceneShifter | `sceneshifter_multitalk` | `multitalk` | `sceneshifter_multitalk` | `outputs/batch/multitalk` | |
-| SceneShifter | `sceneshifter_multitalk` | `infinitetalk` | `sceneshifter_infinitetalk` | `outputs/batch/infinitetalk` | |
-| SceneShifter | `sceneshifter_fantasy` | `fantasytalking` | `sceneshifter_fantasytalking` | `outputs/batch/fantasytalking` | |
-| SceneShifter | `sceneshifter_wans2v` | `wan_s2v` | `sceneshifter_wans2v` | `outputs/batch/wan_s2v` | |
-| SceneShifter | `sceneshifter_hunyuan` | `hunyuan_avatar` | `sceneshifter_hunyuan` | `outputs/batch/hunyuan_avatar` | |
-| Base | `sceneshifter_multitalk` | `multitalk` | `base_model_wan` | `outputs/batch/base_multitalk` | `--no_inject` |
-| Base | `sceneshifter_multitalk` | `infinitetalk` | `base_model_wan` | `outputs/batch/base_infinitetalk` | `--no_inject` |
-| Base | `sceneshifter_fantasy` | `fantasytalking` | `base_model_wan` | `outputs/batch/base_fantasytalking` | `--no_inject` |
-| Base | `sceneshifter_wans2v` | `wan_s2v` | `base_model_wan` | `outputs/batch/base_wan_s2v` | `--no_inject` |
-| Base | `sceneshifter_hunyuan` | `hunyuan_avatar` | `base_model_hunyuan` | `outputs/batch/base_hunyuan_avatar` | `--no_inject` |
+| SceneShifter | `sceneshifter_multitalk` | `multitalk` | `sceneshifter_multitalk` | `multitalk` | |
+| SceneShifter | `sceneshifter_multitalk` | `infinitetalk` | `sceneshifter_infinitetalk` | `infinitetalk` | |
+| SceneShifter | `sceneshifter_fantasy` | `fantasytalking` | `sceneshifter_fantasytalking` | `fantasytalking` | |
+| SceneShifter | `sceneshifter_wans2v` | `wan_s2v` | `sceneshifter_wans2v` | `wan_s2v` | |
+| SceneShifter | `sceneshifter_hunyuan` | `hunyuan_avatar` | `sceneshifter_hunyuan` | `hunyuan_avatar` | |
+| Base | `sceneshifter_multitalk` | `multitalk` | `base_model_wan` | `base_multitalk` | `--no_inject` |
+| Base | `sceneshifter_multitalk` | `infinitetalk` | `base_model_wan` | `base_infinitetalk` | `--no_inject` |
+| Base | `sceneshifter_fantasy` | `fantasytalking` | `base_model_wan` | `base_fantasytalking` | `--no_inject` |
+| Base | `sceneshifter_wans2v` | `wan_s2v` | `base_model_wan` | `base_wan_s2v` | `--no_inject` |
+| Base | `sceneshifter_hunyuan` | `hunyuan_avatar` | `base_model_hunyuan` | `base_hunyuan_avatar` | `--no_inject` |
 
 ## Evaluate Generation Results
 
