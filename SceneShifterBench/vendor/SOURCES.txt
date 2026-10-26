@@ -12,4 +12,6 @@ Both are GPL-3.0. Their license files are kept next to that code.
 The LVIS annotation dump is not included. Class text lists are in YOLO-World/data/texts.
 
 SyncNetInstance.py and SyncNetModel.py are the lip-sync scorer.
-base_68.npy and base_68_close.npy are the 68-point crop templates and are not in this tree.
+base_68.npy and base_68_close.npy are the 68-point crop templates from
+https://github.com/yuangan/evaluation_eat (code/base_68.npy and code/base_68_close.npy).
+Those two files are byte-identical in that repository and in lelechen63/ATVGnet.
