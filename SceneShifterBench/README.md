@@ -1,92 +1,122 @@
 # SceneShifterBench
 
-Evaluation for the 150-id SceneShifter benchmark. The scripts live in this directory. The images, audio, masks, configs, and several checkpoints are downloaded separately and unpacked here, next to `scripts/`.
+## Download Dataset
 
-## Dataset
+Download the dataset from [Google Drive](https://drive.google.com/DATASET_LINK).
 
-`dataset.zip` unpacks into this directory:
-
-```text
-SceneShifterBench/
-  configs/
-    base_model_wan/
-    base_model_hunyuan/
-    sceneshifter_multitalk/
-    sceneshifter_infinitetalk/
-    sceneshifter_fantasytalking/
-    sceneshifter_wans2v/
-    sceneshifter_hunyuan/
-  images/
-  audios/
-  masks/
-```
-
-`base_model_wan` is the shared single-prompt config for MultiTalk, InfiniteTalk, FantasyTalking, and Wan2.2 S2V. `base_model_hunyuan` is the HunyuanVideo-Avatar base config. Each `sceneshifter_*` folder is that backbone's SceneShifter config. The generation CLI ids stay `wan_s2v` and `hunyuan_avatar`.
-
-Audio files are the first 5.2 seconds of the source clips, which covers an 81-frame Wan clip at 16 fps and a 129-frame Hunyuan clip at 25 fps.
-
-The archive prepared on the GPU server is `/mnt/whuscs/ljz/sceneshifter_release/dataset.zip`. Unzip it from the repository root:
+Unzip it from the repository root:
 
 ```bash
 unzip /path/to/dataset.zip -d SceneShifterBench
 ```
 
-## Evaluation Checkpoints
+## Download Evaluation Model Checkpoints
 
-`evaluation_models.zip` unpacks into this same directory. The paths match the ones the scripts read:
+Download the evaluation checkpoints from [Google Drive](https://drive.google.com/EVALUATION_MODELS_LINK).
 
-```text
-checkpoints/syncnet_v2.model
-checkpoints/shape_predictor_68_face_landmarks.dat
-vbench/dino_model/dino_vitbase16_pretrain.pth
-vbench/clip_model/ViT-L-14.pt
-vbench/aesthetic_model/emb_reader/sa_0_4_vit_l_14_linear.pth
-vbench/pyiqa_model/musiq_spaq_ckpt-358bb6af.pth
-vbench2/arcface/resnet18_110.pth
-vbench2/retinaface/retinaface_resnet50_2020-07-20-f168fae3c.zip
-vbench2/YOLO-World/yolo_world_v2_xl_obj365v1_goldg_cc3mlite_pretrain-5daf1395.pth
-vbench2/anomaly_detector/human.pth
-vbench2/anomaly_detector/face.pth
-vbench2/anomaly_detector/hand.pth
-```
-
-The archive prepared on the GPU server is `/mnt/whuscs/ljz/sceneshifter_release/evaluation_models.zip`.
+Unzip them from the repository root:
 
 ```bash
 unzip /path/to/evaluation_models.zip -d SceneShifterBench
 ```
 
-These three models are downloaded by each user. They are not in the zip.
+The archive contains SyncNet, the dlib face-landmark model, and the VBench and VBench-2.0 weights used for aesthetic quality, imaging quality, identity, and anatomy. The 68-point lip-sync templates are already in `vendor/syncnet/`.
 
-SAM3 requires access approval, then:
+SAM3 is a separate download. Request access at [facebook/sam3](https://huggingface.co/facebook/sam3), then:
 
 ```bash
 huggingface-cli download facebook/sam3 --local-dir SceneShifterBench/sam3
 ```
 
-The spatial-consistency script loads `SceneShifterBench/sam3/sam3.pt` with `load_from_HF=False`.
+The spatial-consistency script loads `SceneShifterBench/sam3/sam3.pt`.
 
-Clothes and background questions use LLaVA-Video:
+Clothes and background questions use LLaVA-Video and its SigLIP vision tower:
 
 ```bash
 huggingface-cli download lmms-lab/LLaVA-Video-7B-Qwen2 \
   --local-dir SceneShifterBench/vbench2/lmms-lab/LLaVA-Video-7B-Qwen2
-```
-
-Its vision tower is SigLIP. The semantics script expects this directory and does not call the Hub at runtime:
-
-```bash
 huggingface-cli download google/siglip-so400m-patch14-384 \
   --local-dir SceneShifterBench/vbench2/google/siglip-so400m-patch14-384
 ```
 
-Qwen2.5-7B-Instruct, DreamSim, CLIP ViT-B/32, and tag2text are not used.
+Evaluation with `--local` also needs the DINO source tree next to the DINO weight:
 
-VBench, VBench-2.0, and the SyncNet scorer are included under `SceneShifterBench/vendor`. Evaluation does not need `VBENCH_REPO`, `VBENCH2_REPO`, or `EVALUATION_EAT_CODE`. Lip sync still reads `vendor/syncnet/base_68.npy` and `vendor/syncnet/base_68_close.npy`. The generation environments (`sceneshifter_*`) are separate from the evaluation environments `sam3`, `vbench`, and `vbench2`. Frame extraction, scene timing, and lip sync use `ENV_LIPSYNC` (default `multitalk`).
+```bash
+git clone https://github.com/facebookresearch/dino \
+  SceneShifterBench/vbench/dino_model/facebookresearch_dino_main
+```
 
-## Score a Run
+Create the evaluation environments. The scorer activates these names unless you override them.
 
-Generated videos are `videos/{id}.mp4` inside the run directory. SceneShifter runs use the matching `sceneshifter_*` config. Base-model runs use `base_model_wan` or `base_model_hunyuan`; those two configs select single-prompt timing. A 129-frame clip uses the Hunyuan buckets, and an 81-frame clip uses the Wan buckets.
+```bash
+export ENV_LIPSYNC=multitalk
+export ENV_SAM3=sam3
+export ENV_VBENCH=vbench
+export ENV_VBENCH2=vbench2
+```
+
+`ENV_LIPSYNC` is used for frame extraction, scene timing, and lip sync. `ENV_SAM3`, `ENV_VBENCH`, and `ENV_VBENCH2` are used for spatial consistency, VBench, and VBench-2.0.
+
+VBench, for aesthetic quality and imaging quality:
+
+```bash
+conda create -n vbench python=3.10 -y
+conda activate vbench
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip install vbench
+```
+
+VBench-2.0, for anatomy, identity, clothes, and background questions. This follows the [VBench-2.0 install](https://github.com/Vchitect/VBench/tree/master/VBench-2.0#installation). The evaluator imports the copy under `SceneShifterBench/vendor`.
+
+```bash
+git clone https://github.com/Vchitect/VBench.git
+cd VBench/VBench-2.0
+conda create -n vbench2 python=3.10 -y
+conda activate vbench2
+conda install psutil
+pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu118
+python -m pip install ninja
+python -m pip install git+https://github.com/Dao-AILab/flash-attention.git@v2.7.2.post1
+pip install -r requirement.txt
+pip install retinaface_pytorch==0.0.8 --no-deps
+pip install mmcv==2.2.0 -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.4/index.html --no-cache-dir
+```
+
+That checkout is only for installing the VBench-2.0 dependencies. Scoring still imports `SceneShifterBench/vendor`. If `mmcv` reports that its version exceeds 2.1.0, raise `mmcv_maximum_version` to `2.3.0` in the installed `mmdet` and `mmyolo` packages, as described in that install section.
+
+SAM3, following the [SAM 3 install](https://github.com/facebookresearch/sam3#installation):
+
+```bash
+conda create -n sam3 python=3.12 -y
+conda activate sam3
+pip install torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+git clone https://github.com/facebookresearch/sam3.git
+cd sam3
+pip install -e .
+```
+
+## Batch Generation
+
+The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or HunyuanVideo-Avatar over a metadata folder. One process is started per GPU. A clip is skipped when `videos/<id>.mp4` is already in the output folder.
+
+```bash
+python scripts/batch_generate.py \
+  --backbone multitalk \
+  --dataset_root SceneShifterBench \
+  --metadata_glob 'configs/sceneshifter_multitalk/*_metadata.json' \
+  --output_root outputs/batch/multitalk \
+  --gpus 0,1
+```
+
+Add `--no_inject` to run the unmodified attention path for MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or HunyuanVideo-Avatar. Point `--metadata_glob` at `configs/base_model_wan/` or `configs/base_model_hunyuan/` for those base-model runs.
+
+`--dry_run` checks that each metadata file's image, audio, and masks exist. `--ids 023,032` or `--start_id` and `--end_id` limit the clips.
+
+## Evaluate Generation Results
+
+Generated videos are `videos/{id}.mp4` inside the run directory. Run the commands below from the repository root. `--ids 023,032` and `--resume` limit or continue a run. Metric files are written inside the run directory.
+
+SceneShifter Wan-based models are MultiTalk, InfiniteTalk, FantasyTalking, and Wan2.2 S2V. These clips are 81 frames. Pass the matching config:
 
 ```bash
 bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
@@ -94,10 +124,28 @@ bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
   --config sceneshifter_multitalk
 ```
 
+The other Wan-based configs are `sceneshifter_infinitetalk`, `sceneshifter_fantasytalking`, and `sceneshifter_wans2v`.
+
+SceneShifter HunyuanVideo-Avatar clips are 129 frames:
+
+```bash
+bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
+  outputs/batch/hunyuan_avatar \
+  --config sceneshifter_hunyuan
+```
+
+Base-model runs use a single prompt. Wan-based base runs (MultiTalk, InfiniteTalk, FantasyTalking, and Wan2.2 S2V) use `base_model_wan`:
+
+```bash
+bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
+  outputs/batch_base/multitalk \
+  --config base_model_wan
+```
+
+The HunyuanVideo-Avatar base run uses `base_model_hunyuan`:
+
 ```bash
 bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
   outputs/batch_base/hunyuan_avatar \
   --config base_model_hunyuan
 ```
-
-`--ids 023,032` and `--resume` limit or continue a run. Metric files are written inside the run directory.

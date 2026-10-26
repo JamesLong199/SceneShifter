@@ -316,4 +316,4 @@ The video is written to `outputs/demos/<backbone>/videos/<id>.mp4`.
 
 ## Evaluation on SceneShifterBench
 
-Dataset layout, evaluation checkpoints, and scoring commands are in [SceneShifterBench/README.md](SceneShifterBench/README.md).
+Follow the instruction in [SceneShifterBench/README.md](SceneShifterBench/README.md) to setup SceneShifterBench and run full test and evaluation.
