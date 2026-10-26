@@ -12,7 +12,9 @@ unzip /path/to/dataset.zip -d SceneShifterBench
 
 ## Download Evaluation Model Checkpoints
 
-Download the evaluation checkpoints from [Google Drive](https://drive.google.com/EVALUATION_MODELS_LINK).
+### Google Drive Download
+
+Download parts of the evaluation checkpoints from [Google Drive](https://drive.google.com/EVALUATION_MODELS_LINK).
 
 Unzip them from the repository root:
 
@@ -20,17 +22,13 @@ Unzip them from the repository root:
 unzip /path/to/evaluation_models.zip -d SceneShifterBench
 ```
 
-The archive contains SyncNet, the dlib face-landmark model, and the VBench and VBench-2.0 weights used for aesthetic quality, imaging quality, identity, and anatomy. The 68-point lip-sync templates are already in `vendor/syncnet/`.
+### HuggingFace Download
 
 SAM3 is a separate download. Request access at [facebook/sam3](https://huggingface.co/facebook/sam3), then:
 
 ```bash
 huggingface-cli download facebook/sam3 --local-dir SceneShifterBench/sam3
 ```
-
-The spatial-consistency script loads `SceneShifterBench/sam3/sam3.pt`.
-
-Clothes and background questions use LLaVA-Video and its SigLIP vision tower:
 
 ```bash
 huggingface-cli download lmms-lab/LLaVA-Video-7B-Qwen2 \
@@ -49,7 +47,7 @@ git clone https://github.com/facebookresearch/dino \
 Create the evaluation environments. The scorer activates these names unless you override them.
 
 ```bash
-export ENV_LIPSYNC=multitalk
+export ENV_LIPSYNC=sceneshifter_multitalk
 export ENV_SAM3=sam3
 export ENV_VBENCH=vbench
 export ENV_VBENCH2=vbench2
@@ -95,22 +93,17 @@ cd sam3
 pip install -e .
 ```
 
-## Batch Generation
+## Test on SceneShifterBench
 
-The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or HunyuanVideo-Avatar over a metadata folder. One process is started per GPU. A clip is skipped when `videos/<id>.mp4` is already in the output folder.
+The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, WanS2V, or HunyuanVideo-Avatar over a metadata folder. One process is started per GPU. A clip is skipped when `videos/<id>.mp4` is already in the output folder.
 
-```bash
-python scripts/batch_generate.py \
-  --backbone multitalk \
-  --dataset_root SceneShifterBench \
-  --metadata_glob 'configs/sceneshifter_multitalk/*_metadata.json' \
-  --output_root outputs/batch/multitalk \
-  --gpus 0,1
-```
-
-Add `--no_inject` to run the unmodified attention path for MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or HunyuanVideo-Avatar. Point `--metadata_glob` at `configs/base_model_wan/` or `configs/base_model_hunyuan/` for those base-model runs.
-
-`--dry_run` checks that each metadata file's image, audio, and masks exist. `--ids 023,032` or `--start_id` and `--end_id` limit the clips.
+| Backbone | Command |
+|---|---|
+| MultiTalk | `conda activate sceneshifter_multitalk && python scripts/batch_generate.py --backbone multitalk --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_multitalk/*_metadata.json' --output_root outputs/batch/multitalk --gpus 0,1` |
+| InfiniteTalk | `conda activate sceneshifter_multitalk && python scripts/batch_generate.py --backbone infinitetalk --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_infinitetalk/*_metadata.json' --output_root outputs/batch/infinitetalk --gpus 0,1` |
+| FantasyTalking | `conda activate sceneshifter_fantasy && python scripts/batch_generate.py --backbone fantasytalking --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_fantasytalking/*_metadata.json' --output_root outputs/batch/fantasytalking --gpus 0,1` |
+| WanS2V | `conda activate sceneshifter_wans2v && python scripts/batch_generate.py --backbone wan_s2v --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_wans2v/*_metadata.json' --output_root outputs/batch/wan_s2v --gpus 0,1` |
+| HunyuanVideo-Avatar | `conda activate sceneshifter_hunyuan && python scripts/batch_generate.py --backbone hunyuan_avatar --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_hunyuan/*_metadata.json' --output_root outputs/batch/hunyuan_avatar --gpus 0,1` |
 
 ## Evaluate Generation Results
 
