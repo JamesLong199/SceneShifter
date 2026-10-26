@@ -114,7 +114,7 @@ export ENV_VBENCH=vbench
 export ENV_VBENCH2=vbench2
 ```
 
-The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, WanS2V, or HunyuanVideo-Avatar over a metadata folder. `--gpus` takes a comma-separated list of GPU ids, and one process is started for each id. A clip is skipped when `videos/<id>.mp4` is already in the output folder. `--no_inject` runs the backbone's own attention. Base rows pass it. SceneShifter rows apply the frame-prompt router. On InfiniteTalk, `--no_inject` keeps the official first-clip latent pin.
+This test script runs MultiTalk, InfiniteTalk, FantasyTalking, WanS2V, or HunyuanVideo-Avatar over all test cases in SceneShifterBench. `--gpus` takes a comma-separated list of GPU ids, upon which the generation of test samples will be evenly divided. Clips already been generated will be skipped. `--no_inject` disables SceneShifter features to run the base model inference.
 
 ```bash
 conda activate [ENVIRONMENT] && python scripts/batch_generate.py \
