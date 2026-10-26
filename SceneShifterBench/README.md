@@ -41,16 +41,14 @@ huggingface-cli download google/siglip-so400m-patch14-384 \
 
 ## Environment Installation
 
-Create the evaluation environments. The scorer activates these names unless you override them.
+Create one conda environment for each scorer.
 
-```bash
-export ENV_LIPSYNC=sceneshifter_multitalk
-export ENV_SAM3=sam3
-export ENV_VBENCH=vbench
-export ENV_VBENCH2=vbench2
-```
-
-`ENV_LIPSYNC` is used for frame extraction, scene timing, and lip sync. `ENV_SAM3`, `ENV_VBENCH`, and `ENV_VBENCH2` are used for spatial consistency, VBench, and VBench-2.0.
+| Variable | Environment | Role |
+|---|---|---|
+| `ENV_LIPSYNC` | `sceneshifter_multitalk` | Temporal accuracy and lip sync |
+| `ENV_SAM3` | `sam3` | Spatial subject consistency |
+| `ENV_VBENCH` | `vbench` | Aesthetic quality and imaging quality |
+| `ENV_VBENCH2` | `vbench2` | Human identity, clothes, and background semantics |
 
 ### Sam3 Installation
 
@@ -78,7 +76,7 @@ pip install vbench
 
 ### VBench-2.0 Installation
 
-VBench-2.0, for anatomy, identity, clothes, and background questions. This follows the [VBench-2.0 install](https://github.com/Vchitect/VBench/tree/master/VBench-2.0#installation). The evaluator imports the copy under `SceneShifterBench/vendor`.
+VBench-2.0, for human identity, clothes, and background semantics. This follows the [VBench-2.0 install](https://github.com/Vchitect/VBench/tree/master/VBench-2.0#installation).
 
 ```bash
 git clone https://github.com/Vchitect/VBench.git
@@ -94,7 +92,7 @@ pip install retinaface_pytorch==0.0.8 --no-deps
 pip install mmcv==2.2.0 -f https://download.openmmlab.com/mmcv/dist/cu118/torch2.4/index.html --no-cache-dir
 ```
 
-That checkout is only for installing the VBench-2.0 dependencies. Scoring still imports `SceneShifterBench/vendor`. If `mmcv` reports that its version exceeds 2.1.0, raise `mmcv_maximum_version` to `2.3.0` in the installed `mmdet` and `mmyolo` packages, as described in that install section.
+If `mmcv` reports that its version exceeds 2.1.0, raise `mmcv_maximum_version` to `2.3.0` in the installed `mmdet` and `mmyolo` packages.
 
 ### DINO Source Code
 
@@ -106,6 +104,15 @@ git clone https://github.com/facebookresearch/dino \
 ```
 
 ## Test on SceneShifterBench
+
+Export the scorer environment names.
+
+```bash
+export ENV_LIPSYNC=sceneshifter_multitalk
+export ENV_SAM3=sam3
+export ENV_VBENCH=vbench
+export ENV_VBENCH2=vbench2
+```
 
 The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, WanS2V, or HunyuanVideo-Avatar over a metadata folder. One process is started per GPU. A clip is skipped when `videos/<id>.mp4` is already in the output folder.
 
