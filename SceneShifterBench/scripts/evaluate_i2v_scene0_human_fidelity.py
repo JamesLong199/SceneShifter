@@ -71,28 +71,28 @@ from eval_resume_utils import (  # noqa: E402
 
 
 def _require_code_repo(env_name: str, cli_value: str = "") -> Path:
-    raw = str(cli_value or "").strip() or os.environ.get(env_name, "").strip()
-    if not raw:
-        raise SystemExit(f"{env_name} is unset. Export {env_name} to the code repository.")
-    path = Path(raw).expanduser().resolve()
+    raw = str(cli_value or "").strip()
+    path = Path(raw).expanduser().resolve() if raw else (_BENCH_ROOT / "vendor")
     if not path.is_dir():
-        raise SystemExit(f"{env_name} does not exist: {path}")
+        raise SystemExit(f"Missing {env_name} code at {path}")
     return path
 
 
 def _maybe_add_vbench2_to_syspath(vbench_repo: Path) -> None:
     """
     Allow importing `vbench2` without installing as a site-package.
-    `vbench_repo` should be the VBench-2.0 repository root.
+    `vbench_repo` is the directory that contains the `vbench2` package.
     """
     if vbench_repo.exists() and str(vbench_repo) not in sys.path:
         sys.path.insert(0, str(vbench_repo))
 
     # YOLO-World configs use `custom_imports=dict(imports=['yolo_world'], ...)`.
-    # Ensure `yolo_world` is importable by adding the third_party/YOLO-World root.
     yolo_world_root = (vbench_repo / "vbench2" / "third_party" / "YOLO-World").resolve()
     if yolo_world_root.exists() and str(yolo_world_root) not in sys.path:
         sys.path.insert(0, str(yolo_world_root))
+    mmyolo_root = (yolo_world_root / "mmyolo").resolve()
+    if mmyolo_root.is_dir() and str(mmyolo_root) not in sys.path:
+        sys.path.append(str(mmyolo_root))
 
 
 def _split_mask_from_cut(
@@ -1345,7 +1345,7 @@ def main() -> None:
         "--vbench-repo",
         type=str,
         default="",
-        help="VBench code repository. Defaults to the VBENCH_REPO environment variable.",
+        help="Directory that contains the vbench and vbench2_beta_i2v packages. Defaults to SceneShifterBench/vendor.",
     )
     parser.add_argument(
         "--local",
@@ -1413,7 +1413,7 @@ def main() -> None:
         "--vbench2-repo",
         type=str,
         default="",
-        help="Path to the VBench-2.0 repo. Defaults to the VBENCH2_REPO environment variable.",
+        help="Directory that contains the vbench2 package. Defaults to SceneShifterBench/vendor.",
     )
     parser.add_argument(
         "--vbench2-cache-dir",

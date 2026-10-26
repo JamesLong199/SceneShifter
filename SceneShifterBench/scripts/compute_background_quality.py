@@ -79,12 +79,10 @@ def _natural_sort_key(p: Path) -> Tuple:
 
 
 def _require_code_repo(env_name: str, cli_value: str = "") -> Path:
-    raw = str(cli_value or "").strip() or os.environ.get(env_name, "").strip()
-    if not raw:
-        raise SystemExit(f"{env_name} is unset. Export {env_name} to the code repository.")
-    path = Path(raw).expanduser().resolve()
+    raw = str(cli_value or "").strip()
+    path = Path(raw).expanduser().resolve() if raw else (_BENCH_ROOT / "vendor")
     if not path.is_dir():
-        raise SystemExit(f"{env_name} does not exist: {path}")
+        raise SystemExit(f"Missing {env_name} code at {path}")
     return path
 
 
@@ -530,7 +528,7 @@ def main() -> None:
         "--vbench-repo",
         type=str,
         default="",
-        help="VBench code repository. Defaults to the VBENCH_REPO environment variable.",
+        help="Directory that contains the vbench package. Defaults to SceneShifterBench/vendor.",
     )
     parser.add_argument(
         "--vbench-cache-dir",

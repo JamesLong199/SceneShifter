@@ -82,7 +82,7 @@ huggingface-cli download google/siglip-so400m-patch14-384 \
 
 Qwen2.5-7B-Instruct, DreamSim, CLIP ViT-B/32, and tag2text are not used.
 
-VBench and VBench-2.0 are code checkouts, not files in the zip. Set `VBENCH_REPO` and `VBENCH2_REPO` to those clones before evaluation. Lip sync also needs the SyncNet code directory in `EVALUATION_EAT_CODE` (the directory that contains `SyncNetInstance.py`). The generation environments (`sceneshifter_*`) are separate from the evaluation environments `sam3`, `vbench`, and `vbench2`. Frame extraction, scene timing, and lip sync use `ENV_LIPSYNC` (default `multitalk`).
+VBench, VBench-2.0, and the SyncNet scorer are included under `SceneShifterBench/vendor`. Evaluation does not need `VBENCH_REPO`, `VBENCH2_REPO`, or `EVALUATION_EAT_CODE`. Lip sync still reads `vendor/syncnet/base_68.npy` and `vendor/syncnet/base_68_close.npy`. The generation environments (`sceneshifter_*`) are separate from the evaluation environments `sam3`, `vbench`, and `vbench2`. Frame extraction, scene timing, and lip sync use `ENV_LIPSYNC` (default `multitalk`).
 
 ## Score a Run
 

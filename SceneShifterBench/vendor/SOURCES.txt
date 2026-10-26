@@ -1,0 +1,15 @@
+VBench and VBench-2.0
+  https://github.com/Vchitect/VBench
+  fd18b3d055cb0fc6f066ca90fe2c3c8cbb698490
+  Apache-2.0, see LICENSE
+  Packages used by the bench: vbench, vbench2_beta_i2v, vbench2
+
+LLaVA-NeXT, ArcFace, and ViTDetector are the copies under vbench2/third_party.
+ViTDetector training data, assets, and its nested YOLO-World tree are not included.
+
+YOLO-World and MMYOLO are under vbench2/third_party/YOLO-World.
+Both are GPL-3.0. Their license files are kept next to that code.
+The LVIS annotation dump is not included. Class text lists are in YOLO-World/data/texts.
+
+SyncNetInstance.py and SyncNetModel.py are the lip-sync scorer.
+base_68.npy and base_68_close.npy are the 68-point crop templates and are not in this tree.

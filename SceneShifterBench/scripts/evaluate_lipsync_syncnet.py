@@ -4,7 +4,7 @@
 SceneShifter lip-sync evaluation (SyncNet confidence) + dlib landmark audit.
 
 This script is a SceneShifter-specific wrapper around the SyncNet evaluation code
-in `codes/evaluation_eat/code/SyncNetInstance.py`.
+in `SceneShifterBench/vendor/syncnet/SyncNetInstance.py`.
 
 Key constraints (from the upstream codebase):
 - SyncNet evaluation assumes **25 FPS video** and extracts audio at **16 kHz**.
@@ -26,7 +26,8 @@ Checkpoints (you provide these files):
 - Dlib landmark model: `shape_predictor_68_face_landmarks.dat`
 
 Defaults live under the bench `checkpoints/` directory.
-SyncNet code and the 68-point templates are loaded from EVALUATION_EAT_CODE.
+SyncNet code is loaded from `vendor/syncnet`. The 68-point templates
+`base_68.npy` and `base_68_close.npy` are loaded from that same directory.
 
 This script runs everything **in one pass**:
 - dlib landmark detection audit (success/fail stats)
@@ -100,12 +101,10 @@ def _video_id_from_name(path: str) -> Optional[str]:
 
 
 def _eat_code_dir() -> str:
-    raw = os.environ.get("EVALUATION_EAT_CODE", "").strip()
-    if not raw:
-        raise SystemExit("EVALUATION_EAT_CODE is unset. Export EVALUATION_EAT_CODE to the SyncNet code directory.")
-    if not os.path.isdir(raw):
-        raise SystemExit(f"EVALUATION_EAT_CODE does not exist: {raw}")
-    return raw
+    path = str((_BENCH_ROOT / "vendor" / "syncnet").resolve())
+    if not os.path.isdir(path):
+        raise SystemExit(f"Missing SyncNet code: {path}")
+    return path
 
 
 def _sorted_frame_paths(frame_dir: str) -> List[str]:

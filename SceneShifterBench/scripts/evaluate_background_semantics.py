@@ -79,12 +79,10 @@ from generate_background_questionnaire import (  # type: ignore
 
 # ---- VBench2 / LLaVA-NeXT imports (aligned with VBench2 dimension code) ----
 def _require_code_repo(env_name: str, cli_value: str = "") -> Path:
-    raw = str(cli_value or "").strip() or os.environ.get(env_name, "").strip()
-    if not raw:
-        raise SystemExit(f"{env_name} is unset. Export {env_name} to the code repository.")
-    path = Path(raw).expanduser().resolve()
+    raw = str(cli_value or "").strip()
+    path = Path(raw).expanduser().resolve() if raw else (_BENCH_ROOT / "vendor")
     if not path.is_dir():
-        raise SystemExit(f"{env_name} does not exist: {path}")
+        raise SystemExit(f"Missing {env_name} code at {path}")
     return path
 
 
@@ -955,7 +953,7 @@ def main() -> None:
         "--vbench2-repo",
         type=str,
         default="",
-        help="VBench-2.0 code repository. Defaults to the VBENCH2_REPO environment variable.",
+        help="Directory that contains the vbench2 package. Defaults to SceneShifterBench/vendor.",
     )
     parser.add_argument("--cache-dir", type=str, default=str(_BENCH_ROOT / "vbench2"), help="Local cache root containing models.")
     parser.add_argument(

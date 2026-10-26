@@ -117,14 +117,6 @@ if [[ -n "${RESUME_MODE}" ]]; then
   RESUME_FLAGS=(--resume)
 fi
 
-require_env() {
-  local name="$1"
-  if [[ -z "${!name:-}" ]]; then
-    echo "Set ${name} to the code repository before this stage." >&2
-    exit 1
-  fi
-}
-
 echo "[evaluate_sceneshifter] run=${RUN_DIR} config=${CONFIG} ids=${IDS_ARG:-all} resume=${RESUME_MODE:-off}"
 
 conda_activate "${ENV_LIPSYNC}"
@@ -184,8 +176,6 @@ python scripts/compute_spatial_subject_consistency.py \
 
 conda_deactivate
 
-require_env VBENCH_REPO
-require_env VBENCH2_REPO
 conda_activate "${ENV_VBENCH2}"
 
 python scripts/evaluate_i2v_scene0_human_fidelity.py \
@@ -194,7 +184,6 @@ python scripts/evaluate_i2v_scene0_human_fidelity.py \
   --output-dir "${RUN_DIR}/i2v_scene0_eval" \
   --sub-clip-dir "${SUB_CLIP_DIR}" \
   --vbench-cache-dir "${BENCH_ROOT}/vbench" \
-  --vbench-repo "${VBENCH_REPO}" \
   --local \
   --device cuda \
   --dimensions i2v_subject \
@@ -204,7 +193,6 @@ python scripts/evaluate_i2v_scene0_human_fidelity.py \
   --eval-human-anatomy \
   --eval-scene0 \
   --metadata-dir "${METADATA_DIR}" \
-  --vbench2-repo "${VBENCH2_REPO}" \
   --vbench2-cache-dir "${BENCH_ROOT}/vbench2" \
   --human-identity-arcface-weight "${BENCH_ROOT}/vbench2/arcface/resnet18_110.pth" \
   --human-clothes-llava-dir "${BENCH_ROOT}/vbench2/lmms-lab/LLaVA-Video-7B-Qwen2" \
@@ -220,7 +208,6 @@ python scripts/compute_background_quality.py \
   --metadata-dir "${METADATA_DIR}" \
   --output-dir "${RUN_DIR}/background_quality_scene1" \
   --sub-clip-dir "${SUB_CLIP_DIR}" \
-  --vbench-repo "${VBENCH_REPO}" \
   --vbench-cache-dir "${BENCH_ROOT}/vbench" \
   "${IDS_FLAGS[@]}" \
   "${RESUME_FLAGS[@]}"
@@ -234,14 +221,12 @@ python scripts/evaluate_background_semantics.py \
   --metadata-dir "${METADATA_DIR}" \
   --output-dir "${RUN_DIR}/background_semantics" \
   --sub-clip-dir "${SUB_CLIP_DIR}" \
-  --vbench2-repo "${VBENCH2_REPO}" \
   --cache-dir "${BENCH_ROOT}/vbench2" \
   --llava-dir "${BENCH_ROOT}/vbench2/lmms-lab/LLaVA-Video-7B-Qwen2" \
   "${IDS_FLAGS[@]}" \
   "${RESUME_FLAGS[@]}"
 
 conda_deactivate
-require_env EVALUATION_EAT_CODE
 conda_activate "${ENV_LIPSYNC}"
 
 python scripts/evaluate_lipsync_syncnet.py \
