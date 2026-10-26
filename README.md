@@ -278,7 +278,7 @@ python -m pip install -e .
 
 Activate the environment from the row you created, then install this package into it with `python -m pip install -e .`.
 
-## Download checkpoints
+## Download Checkpoints
 
 Each backbone has its own directory under `weights/`. The download includes the base model and auxiliary models such as audio and text encoders.
 
@@ -298,7 +298,7 @@ python scripts/download_checkpoints.py --backbone [BACKBONE] # e.g. multitalk
 | `wan_fun_camera` | `weights/wan_fun_camera` |
 | `hunyuan_avatar` | `weights/hunyuan_avatar` |
 
-## Run a demo
+## Run a Demo
 
 Demo images, audio, and masks are in `examples/`. Each backbone reads its own config in `examples/configs/`.
 
@@ -314,23 +314,6 @@ Demo images, audio, and masks are in `examples/`. Each backbone reads its own co
 
 The video is written to `outputs/demos/<backbone>/videos/<id>.mp4`.
 
-## Batch generation
+## Evaluation on SceneShifterBench
 
-The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or HunyuanVideo-Avatar over a metadata folder. One process is started per GPU. A clip is skipped when `videos/<id>.mp4` is already in the output folder.
-
-```bash
-python scripts/batch_generate.py \
-  --backbone multitalk \
-  --dataset_root SceneShifterBench \
-  --metadata_glob 'configs/sceneshifter_multitalk/*_metadata.json' \
-  --output_root outputs/batch/multitalk \
-  --gpus 0,1
-```
-
-Add `--no_inject` to run the unmodified attention path for MultiTalk, InfiniteTalk, FantasyTalking, Wan2.2 S2V, or HunyuanVideo-Avatar. Point `--metadata_glob` at `configs/base_model_wan/` or `configs/base_model_hunyuan/` for those base-model runs.
-
-`--dry_run` checks that each metadata file's image, audio, and masks exist. `--ids 023,032` or `--start_id` and `--end_id` limit the clips.
-
-## SceneShifterBench
-
-Evaluation scripts, the 150-id dataset layout, and the checkpoint download steps are in [SceneShifterBench/README.md](SceneShifterBench/README.md). Unzip the dataset into `SceneShifterBench/` before batch generation or evaluation.
+Dataset layout, evaluation checkpoints, and scoring commands are in [SceneShifterBench/README.md](SceneShifterBench/README.md).

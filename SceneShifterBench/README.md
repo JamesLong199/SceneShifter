@@ -31,7 +31,7 @@ The archive prepared on the GPU server is `/mnt/whuscs/ljz/sceneshifter_release/
 unzip /path/to/dataset.zip -d SceneShifterBench
 ```
 
-## Evaluation checkpoints
+## Evaluation Checkpoints
 
 `evaluation_models.zip` unpacks into this same directory. The paths match the ones the scripts read:
 
@@ -84,7 +84,7 @@ Qwen2.5-7B-Instruct, DreamSim, CLIP ViT-B/32, and tag2text are not used.
 
 VBench and VBench-2.0 are code checkouts, not files in the zip. Set `VBENCH_REPO` and `VBENCH2_REPO` to those clones before evaluation. Lip sync also needs the SyncNet code directory in `EVALUATION_EAT_CODE` (the directory that contains `SyncNetInstance.py`). The generation environments (`sceneshifter_*`) are separate from the evaluation environments `sam3`, `vbench`, and `vbench2`. Frame extraction, scene timing, and lip sync use `ENV_LIPSYNC` (default `multitalk`).
 
-## Score a run
+## Score a Run
 
 Generated videos are `videos/{id}.mp4` inside the run directory. SceneShifter runs use the matching `sceneshifter_*` config. Base-model runs use `base_model_wan` or `base_model_hunyuan`; those two configs select single-prompt timing. A 129-frame clip uses the Hunyuan buckets, and an 81-frame clip uses the Wan buckets.
 
