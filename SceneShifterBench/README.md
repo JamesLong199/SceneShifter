@@ -14,7 +14,7 @@ unzip /path/to/dataset.zip -d SceneShifterBench
 
 ### Google Drive Download
 
-Download parts of the evaluation checkpoints from [Google Drive](https://drive.google.com/EVALUATION_MODELS_LINK).
+Download the first part of the evaluation checkpoints from [Google Drive](https://drive.google.com/EVALUATION_MODELS_LINK).
 
 Unzip them from the repository root:
 
@@ -23,6 +23,8 @@ unzip /path/to/evaluation_models.zip -d SceneShifterBench
 ```
 
 ### HuggingFace Download
+
+Download the second part of the evaluation checkpoints from HuggingFace.
 
 SAM3 is a separate download. Request access at [facebook/sam3](https://huggingface.co/facebook/sam3), then:
 
@@ -37,12 +39,7 @@ huggingface-cli download google/siglip-so400m-patch14-384 \
   --local-dir SceneShifterBench/vbench2/google/siglip-so400m-patch14-384
 ```
 
-Evaluation with `--local` also needs the DINO source tree next to the DINO weight:
-
-```bash
-git clone https://github.com/facebookresearch/dino \
-  SceneShifterBench/vbench/dino_model/facebookresearch_dino_main
-```
+## Environment Installation
 
 Create the evaluation environments. The scorer activates these names unless you override them.
 
@@ -55,6 +52,21 @@ export ENV_VBENCH2=vbench2
 
 `ENV_LIPSYNC` is used for frame extraction, scene timing, and lip sync. `ENV_SAM3`, `ENV_VBENCH`, and `ENV_VBENCH2` are used for spatial consistency, VBench, and VBench-2.0.
 
+### Sam3 Installation
+
+SAM3, following the [SAM 3 install](https://github.com/facebookresearch/sam3#installation):
+
+```bash
+conda create -n sam3 python=3.12 -y
+conda activate sam3
+pip install torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
+git clone https://github.com/facebookresearch/sam3.git
+cd sam3
+pip install -e .
+```
+
+### VBench Installation
+
 VBench, for aesthetic quality and imaging quality:
 
 ```bash
@@ -63,6 +75,8 @@ conda activate vbench
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 pip install vbench
 ```
+
+### VBench-2.0 Installation
 
 VBench-2.0, for anatomy, identity, clothes, and background questions. This follows the [VBench-2.0 install](https://github.com/Vchitect/VBench/tree/master/VBench-2.0#installation). The evaluator imports the copy under `SceneShifterBench/vendor`.
 
@@ -82,15 +96,13 @@ pip install mmcv==2.2.0 -f https://download.openmmlab.com/mmcv/dist/cu118/torch2
 
 That checkout is only for installing the VBench-2.0 dependencies. Scoring still imports `SceneShifterBench/vendor`. If `mmcv` reports that its version exceeds 2.1.0, raise `mmcv_maximum_version` to `2.3.0` in the installed `mmdet` and `mmyolo` packages, as described in that install section.
 
-SAM3, following the [SAM 3 install](https://github.com/facebookresearch/sam3#installation):
+### DINO Source Code
+
+Clone DINO source code.
 
 ```bash
-conda create -n sam3 python=3.12 -y
-conda activate sam3
-pip install torch==2.10.0 torchvision --index-url https://download.pytorch.org/whl/cu128
-git clone https://github.com/facebookresearch/sam3.git
-cd sam3
-pip install -e .
+git clone https://github.com/facebookresearch/dino \
+  SceneShifterBench/vbench/dino_model/facebookresearch_dino_main
 ```
 
 ## Test on SceneShifterBench
