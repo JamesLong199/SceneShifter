@@ -69,21 +69,6 @@
   </div>
 </section>
 
-<section class="section" id="pipeline">
-  <div class="wrap">
-    <h2>Multi-Scene Temporal Control Pipeline</h2>
-    <figure class="figure">
-      <img src="static/images/sceneshifter_pipeline.png" alt="SceneShifter pipeline. A reference image and audio enter a pretrained generator. Foreground motion localization builds a subject mask from selected attention heads. Semantic-aware temporal decoupling applies that mask at the scene cut, so each scene keeps its own background prompt while the subject continues. Text and audio attention condition the clip, and the decoder shows the person moving from a street into an airport.">
-      <figcaption class="figcaption">SceneShifter pipeline. Foreground motion localization and semantic-aware temporal decoupling guide self-attention at a scheduled scene cut</figcaption>
-    </figure>
-    <div class="prose">
-      <p>
-        SceneShifter takes a reference image, speech audio, a scene-cut time, and a text prompt for each scene. The reference image is encoded into the video latent. Self-attention then splits into two paths. Foreground motion localization reads a subject mask from the attention heads that follow the body, including when the pose changes from a squat to standing. Semantic-aware temporal decoupling uses that mask and the scene cut so background keys stay inside each scene, while foreground keys continue across the cut. Each scene keeps its own text prompt, and audio attention keeps the speech aligned. The decoder writes one clip: the background changes at the scheduled frame, and the same person continues through it.
-      </p>
-    </div>
-  </div>
-</section>
-
 <section class="section" id="observations">
   <div class="wrap">
     <h2>Key Observations</h2>
@@ -108,6 +93,21 @@
     <div class="prose">
       <p>
         Guidance needs a mask that follows the subject. On this large-motion clip, averaging reference-to-video attention across every head in a layer (Avg) leaves the mask covering both the early squat and the later standing pose. Heads differ sharply: some track the body, and others stay on the reference position or the background. The IoU heatmap makes that spread visible across layers and heads. SceneShifter reads the dynamic foreground mask from the self-attention components that follow the trajectory, and uses that mask to separate background cuts from subject continuity.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="pipeline">
+  <div class="wrap">
+    <h2>Multi-Scene Temporal Control Pipeline</h2>
+    <figure class="figure">
+      <img src="static/images/sceneshifter_pipeline.png" alt="SceneShifter pipeline. A reference image and audio enter a pretrained generator. Foreground motion localization builds a subject mask from selected attention heads. Semantic-aware temporal decoupling applies that mask at the scene cut, so each scene keeps its own background prompt while the subject continues. Text and audio attention condition the clip, and the decoder shows the person moving from a street into an airport.">
+      <figcaption class="figcaption">SceneShifter pipeline. Foreground motion localization and semantic-aware temporal decoupling guide self-attention at a scheduled scene cut</figcaption>
+    </figure>
+    <div class="prose">
+      <p>
+        SceneShifter takes a reference image, speech audio, a scene-cut time, and a text prompt for each scene. The reference image is encoded into the video latent. Self-attention then splits into two paths. Foreground motion localization reads a subject mask from the attention heads that follow the body, including when the pose changes from a squat to standing. Semantic-aware temporal decoupling uses that mask and the scene cut so background keys stay inside each scene, while foreground keys continue across the cut. Each scene keeps its own text prompt, and audio attention keeps the speech aligned. The decoder writes one clip: the background changes at the scheduled frame, and the same person continues through it.
       </p>
     </div>
   </div>
