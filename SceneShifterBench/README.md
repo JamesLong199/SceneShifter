@@ -114,15 +114,30 @@ export ENV_VBENCH=vbench
 export ENV_VBENCH2=vbench2
 ```
 
-The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, WanS2V, or HunyuanVideo-Avatar over a metadata folder. `--gpus` takes a comma-separated list of GPU ids, and one process is started for each id. A clip is skipped when `videos/<id>.mp4` is already in the output folder.
+The batch script runs MultiTalk, InfiniteTalk, FantasyTalking, WanS2V, or HunyuanVideo-Avatar over a metadata folder. `--gpus` takes a comma-separated list of GPU ids, and one process is started for each id. A clip is skipped when `videos/<id>.mp4` is already in the output folder. `--no_inject` runs the backbone's own attention. Base rows pass it. SceneShifter rows apply the frame-prompt router. On InfiniteTalk, `--no_inject` keeps the official first-clip latent pin.
 
-| Backbone | Command |
-|---|---|
-| MultiTalk | `conda activate sceneshifter_multitalk && python scripts/batch_generate.py --backbone multitalk --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_multitalk/*_metadata.json' --output_root outputs/batch/multitalk --gpus [AVAILABLE DEVICES]` |
-| InfiniteTalk | `conda activate sceneshifter_multitalk && python scripts/batch_generate.py --backbone infinitetalk --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_infinitetalk/*_metadata.json' --output_root outputs/batch/infinitetalk --gpus [AVAILABLE DEVICES]` |
-| FantasyTalking | `conda activate sceneshifter_fantasy && python scripts/batch_generate.py --backbone fantasytalking --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_fantasytalking/*_metadata.json' --output_root outputs/batch/fantasytalking --gpus [AVAILABLE DEVICES]` |
-| WanS2V | `conda activate sceneshifter_wans2v && python scripts/batch_generate.py --backbone wan_s2v --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_wans2v/*_metadata.json' --output_root outputs/batch/wan_s2v --gpus [AVAILABLE DEVICES]` |
-| HunyuanVideo-Avatar | `conda activate sceneshifter_hunyuan && python scripts/batch_generate.py --backbone hunyuan_avatar --dataset_root SceneShifterBench --metadata_glob 'configs/sceneshifter_hunyuan/*_metadata.json' --output_root outputs/batch/hunyuan_avatar --gpus [AVAILABLE DEVICES]` |
+```bash
+conda activate [ENVIRONMENT] && python scripts/batch_generate.py \
+  --backbone [BACKBONE] \
+  --dataset_root SceneShifterBench \
+  --metadata_glob 'configs/[CONFIG]/*_metadata.json' \
+  --output_root outputs/batch/[OUTPUT] \
+  --gpus [AVAILABLE DEVICES] \
+  [EXTRA]
+```
+
+| Method | Environment | Backbone | Config | Output root | Extra flags |
+|---|---|---|---|---|---|
+| SceneShifter | `sceneshifter_multitalk` | `multitalk` | `sceneshifter_multitalk` | `outputs/batch/multitalk` | |
+| SceneShifter | `sceneshifter_multitalk` | `infinitetalk` | `sceneshifter_infinitetalk` | `outputs/batch/infinitetalk` | |
+| SceneShifter | `sceneshifter_fantasy` | `fantasytalking` | `sceneshifter_fantasytalking` | `outputs/batch/fantasytalking` | |
+| SceneShifter | `sceneshifter_wans2v` | `wan_s2v` | `sceneshifter_wans2v` | `outputs/batch/wan_s2v` | |
+| SceneShifter | `sceneshifter_hunyuan` | `hunyuan_avatar` | `sceneshifter_hunyuan` | `outputs/batch/hunyuan_avatar` | |
+| Base | `sceneshifter_multitalk` | `multitalk` | `base_model_wan` | `outputs/batch/base_multitalk` | `--no_inject` |
+| Base | `sceneshifter_multitalk` | `infinitetalk` | `base_model_wan` | `outputs/batch/base_infinitetalk` | `--no_inject` |
+| Base | `sceneshifter_fantasy` | `fantasytalking` | `base_model_wan` | `outputs/batch/base_fantasytalking` | `--no_inject` |
+| Base | `sceneshifter_wans2v` | `wan_s2v` | `base_model_wan` | `outputs/batch/base_wan_s2v` | `--no_inject` |
+| Base | `sceneshifter_hunyuan` | `hunyuan_avatar` | `base_model_hunyuan` | `outputs/batch/base_hunyuan_avatar` | `--no_inject` |
 
 ## Evaluate Generation Results
 
@@ -130,19 +145,21 @@ Generated videos are `videos/{id}.mp4` inside the run directory. Run the command
 
 ```bash
 bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
-  outputs/batch/[BACKBONE] \
+  outputs/batch/[OUTPUT] \
   --config [CONFIG]
 ```
 
-| Method | Backbone | Config |
+SceneShifter videos are written under `outputs/batch/<backbone>`. Base videos are written under `outputs/batch/base_<backbone>`.
+
+| Method | Output | Config |
 |---|---|---|
 | SceneShifter | `multitalk` | `sceneshifter_multitalk` |
 | SceneShifter | `infinitetalk` | `sceneshifter_infinitetalk` |
 | SceneShifter | `fantasytalking` | `sceneshifter_fantasytalking` |
 | SceneShifter | `wan_s2v` | `sceneshifter_wans2v` |
 | SceneShifter | `hunyuan_avatar` | `sceneshifter_hunyuan` |
-| Base | `multitalk` | `base_model_wan` |
-| Base | `infinitetalk` | `base_model_wan` |
-| Base | `fantasytalking` | `base_model_wan` |
-| Base | `wan_s2v` | `base_model_wan` |
-| Base | `hunyuan_avatar` | `base_model_hunyuan` |
+| Base | `base_multitalk` | `base_model_wan` |
+| Base | `base_infinitetalk` | `base_model_wan` |
+| Base | `base_fantasytalking` | `base_model_wan` |
+| Base | `base_wan_s2v` | `base_model_wan` |
+| Base | `base_hunyuan_avatar` | `base_model_hunyuan` |
