@@ -134,22 +134,15 @@ bash SceneShifterBench/scripts/evaluate_sceneshifter.sh \
   --config [CONFIG]
 ```
 
-### Wan-based Models
-
 | Method | Backbone | Config |
 |---|---|---|
 | SceneShifter | `multitalk` | `sceneshifter_multitalk` |
 | SceneShifter | `infinitetalk` | `sceneshifter_infinitetalk` |
 | SceneShifter | `fantasytalking` | `sceneshifter_fantasytalking` |
 | SceneShifter | `wan_s2v` | `sceneshifter_wans2v` |
+| SceneShifter | `hunyuan_avatar` | `sceneshifter_hunyuan` |
 | Base | `multitalk` | `base_model_wan` |
 | Base | `infinitetalk` | `base_model_wan` |
 | Base | `fantasytalking` | `base_model_wan` |
 | Base | `wan_s2v` | `base_model_wan` |
-
-### Hunyuan-based Models
-
-| Method | Backbone | Config |
-|---|---|---|
-| SceneShifter | `hunyuan_avatar` | `sceneshifter_hunyuan` |
 | Base | `hunyuan_avatar` | `base_model_hunyuan` |
