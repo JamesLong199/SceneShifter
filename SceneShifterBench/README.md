@@ -2,7 +2,7 @@
 
 ## Download Dataset
 
-Download the dataset from [Google Drive](https://drive.google.com/DATASET_LINK).
+Download the dataset from [Google Drive](https://drive.google.com/file/d/1_LHxLS-U0eMuGDWhpCGhtaVAIYKcv7uN/view?usp=sharing).
 
 Unzip it from the repository root:
 
@@ -14,7 +14,7 @@ unzip /path/to/dataset.zip -d SceneShifterBench
 
 ### Google Drive Download
 
-Download the first part of the evaluation checkpoints from [Google Drive](https://drive.google.com/EVALUATION_MODELS_LINK).
+Download the first part of the evaluation checkpoints from [Google Drive](https://drive.google.com/file/d/138QVo61VoqFE9UIyUaiqM8StRV4VUzOb/view?usp=sharing).
 
 Unzip them from the repository root:
 
